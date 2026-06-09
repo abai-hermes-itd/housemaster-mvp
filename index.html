@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0F2336">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Хаузмастер">
+<link rel="manifest" href="manifest.json">
+<title>Хаузмастер — Полевой справочник</title>
+<style>
+/* ─── RESET & BASE ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --navy:       #0F2336;
+  --navy-mid:   #1A3550;
+  --green:      #1A6B4A;
+  --green-lt:   #E8F4F0;
+  --green-mid:  #2E8A62;
+  --red:        #C8400A;
+  --red-lt:     #FDECEA;
+  --amber:      #B87010;
+  --amber-lt:   #FFF3CD;
+  --blue:       #1F5FA3;
+  --blue-lt:    #E6F1FB;
+  --sage:       #3B6D11;
+  --sage-lt:    #EAF3DE;
+  --bg:         #F5F2EC;
+  --bg-card:    #FFFFFF;
+  --text:       #1A1A1A;
+  --text-mid:   #444444;
+  --text-dim:   #777777;
+  --border:     #D8D0C8;
+  --shadow:     0 2px 8px rgba(15,35,54,0.10);
+  --shadow-lg:  0 4px 20px rgba(15,35,54,0.15);
+  --r:          12px;
+  --r-sm:       8px;
+  --touch:      48px;
+  /* Domain colors */
+  --roof:   #0F6E56;
+  --hvac:   #8B2500;
+  --plmb:   #185FA5;
+  --elec:   #BA7517;
+  --bsmt:   #4A4A4A;
+  --cmpl:   #4A2B8C;
+  --facd:   #3B6D11;
+  --yard:   #0D6B75;
+  --lift:   #1F3864;
+  --emrg:   #A32D2D;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* ─── APP SHELL ────────────────────────────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 480px;
+  margin: 0 auto;
+  position: relative;
+  overflow: hidden;
+}
+
+/* ─── HEADER ───────────────────────────────────────────────────────── */
+.app-header {
+  background: var(--navy);
+  color: #fff;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  flex-shrink: 0;
+  z-index: 10;
+}
+.app-header .back-btn {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 22px;
+  cursor: pointer;
+  padding: 4px 8px 4px 0;
+  min-width: 36px;
+  min-height: var(--touch);
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.app-header .header-title {
+  flex: 1;
+  min-width: 0;
+}
+.app-header .header-title h1 {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.app-header .header-title p {
+  font-size: 12px;
+  color: rgba(255,255,255,0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.header-badge {
+  background: var(--red);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+
+/* ─── SCREENS ──────────────────────────────────────────────────────── */
+.screen {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+.screen.active {
+  display: flex;
+}
+.scroll-area {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px 16px 32px;
+}
+
+/* ─── SEARCH BAR ───────────────────────────────────────────────────── */
+.search-wrap {
+  padding: 10px 16px;
+  background: var(--navy-mid);
+  flex-shrink: 0;
+}
+.search-box {
+  position: relative;
+}
+.search-box input {
+  width: 100%;
+  height: 44px;
+  padding: 0 16px 0 44px;
+  background: rgba(255,255,255,0.12);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 22px;
+  color: #fff;
+  font-size: 15px;
+  outline: none;
+  transition: background 0.2s;
+}
+.search-box input::placeholder { color: rgba(255,255,255,0.45); }
+.search-box input:focus {
+  background: rgba(255,255,255,0.18);
+  border-color: rgba(255,255,255,0.4);
+}
+.search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 17px;
+  pointer-events: none;
+  opacity: 0.6;
+}
+.search-results {
+  margin-top: 8px;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.search-results.visible { display: flex; }
+.search-result-item {
+  background: var(--bg-card);
+  border-radius: var(--r-sm);
+  padding: 10px 14px;
+  cursor: pointer;
+  border-left: 3px solid var(--green);
+  transition: background 0.15s;
+}
+.search-result-item:active { background: var(--green-lt); }
+.search-result-item .sri-code { font-size: 11px; font-weight: 700; color: var(--green); font-family: monospace; }
+.search-result-item .sri-name { font-size: 14px; font-weight: 600; color: var(--text); margin: 1px 0; }
+.search-result-item .sri-meta { font-size: 12px; color: var(--text-dim); }
+
+/* ─── P1 ALERT STRIP ───────────────────────────────────────────────── */
+.p1-strip {
+  background: var(--red);
+  color: #fff;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.p1-strip:active { background: #a53308; }
+.p1-strip .p1-icon { font-size: 20px; flex-shrink: 0; }
+.p1-strip .p1-text { flex: 1; }
+.p1-strip .p1-text strong { display: block; font-size: 13px; font-weight: 700; }
+.p1-strip .p1-text span { font-size: 12px; opacity: 0.85; }
+.p1-strip .p1-arrow { font-size: 18px; opacity: 0.7; }
+
+/* ─── DOMAIN GRID ──────────────────────────────────────────────────── */
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--text-dim);
+  margin: 16px 0 8px;
+}
+.domain-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.domain-tile {
+  background: var(--bg-card);
+  border-radius: var(--r);
+  padding: 14px 14px 12px;
+  cursor: pointer;
+  border-top: 4px solid var(--dc, #888);
+  box-shadow: var(--shadow);
+  transition: transform 0.15s, box-shadow 0.15s;
+  min-height: var(--touch);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.domain-tile:active { transform: scale(0.97); box-shadow: none; }
+.domain-tile .dt-code {
+  font-size: 11px;
+  font-weight: 700;
+  font-family: monospace;
+  color: var(--dc, #888);
+  letter-spacing: 0.5px;
+}
+.domain-tile .dt-name { font-size: 14px; font-weight: 700; color: var(--text); line-height: 1.2; }
+.domain-tile .dt-meta { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.domain-tile .dt-icon { font-size: 22px; margin-bottom: 2px; }
+
+/* ─── PRIORITY BADGES ──────────────────────────────────────────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.badge-p1 { background: var(--red-lt); color: var(--red); }
+.badge-p2 { background: var(--amber-lt); color: var(--amber); }
+.badge-p3 { background: var(--sage-lt); color: var(--sage); }
+.badge-p4 { background: var(--blue-lt); color: var(--blue); }
+.badge-opex  { background: #E8F4F0; color: var(--green); }
+.badge-capex { background: var(--red-lt); color: var(--red); }
+.badge-eval  { background: var(--amber-lt); color: var(--amber); }
+
+/* ─── CARDS ────────────────────────────────────────────────────────── */
+.card {
+  background: var(--bg-card);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.card-header {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.card-header .ch-icon { font-size: 22px; flex-shrink: 0; margin-top: 1px; }
+.card-header .ch-body { flex: 1; min-width: 0; }
+.card-header .ch-code { font-size: 11px; font-weight: 700; font-family: monospace; color: var(--text-dim); }
+.card-header .ch-name { font-size: 15px; font-weight: 700; color: var(--text); margin: 2px 0 6px; line-height: 1.3; }
+.card-header .ch-badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.card-body { padding: 12px 14px; }
+.card-body p { font-size: 14px; color: var(--text-mid); line-height: 1.5; }
+
+/* ─── EXPANDABLE ROW ───────────────────────────────────────────────── */
+.exp-row {
+  border-top: 1px solid var(--border);
+}
+.exp-row summary {
+  list-style: none;
+  padding: 11px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-mid);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  min-height: var(--touch);
+}
+.exp-row summary::-webkit-details-marker { display: none; }
+.exp-row summary::after { content: '›'; font-size: 18px; color: var(--text-dim); transition: transform 0.2s; }
+.exp-row[open] summary::after { transform: rotate(90deg); }
+.exp-row .exp-content {
+  padding: 0 14px 12px;
+  font-size: 14px;
+  color: var(--text-mid);
+  line-height: 1.6;
+}
+
+/* ─── STEP LIST ────────────────────────────────────────────────────── */
+.step-list { list-style: none; counter-reset: steps; }
+.step-list li {
+  counter-increment: steps;
+  display: flex;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-mid);
+}
+.step-list li:last-child { border-bottom: none; }
+.step-list li::before {
+  content: counter(steps);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  background: var(--navy);
+  color: #fff;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* ─── BULLET LIST ──────────────────────────────────────────────────── */
+.bullet-list { list-style: none; }
+.bullet-list li {
+  display: flex;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text-mid);
+}
+.bullet-list li::before {
+  content: '•';
+  color: var(--green);
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ─── CHECKLIST ────────────────────────────────────────────────────── */
+.checklist-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.checklist-item:last-child { border-bottom: none; }
+.checklist-item:active { background: #F0F0EE; }
+.checklist-item.checked { background: var(--green-lt); }
+.checklist-item .ci-check {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 2px solid var(--border);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  margin-top: 1px;
+  transition: all 0.15s;
+}
+.checklist-item.checked .ci-check {
+  background: var(--green);
+  border-color: var(--green);
+  color: #fff;
+}
+.checklist-item .ci-body { flex: 1; min-width: 0; }
+.checklist-item .ci-name { font-size: 14px; font-weight: 600; color: var(--text); line-height: 1.3; }
+.checklist-item .ci-norm { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.checklist-item .ci-orc { font-size: 11px; font-family: monospace; color: var(--green); margin-top: 3px; font-weight: 700; }
+.checklist-progress {
+  padding: 10px 14px;
+  background: var(--green-lt);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.progress-bar {
+  flex: 1;
+  height: 6px;
+  background: rgba(0,0,0,0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  background: var(--green);
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.progress-text { font-size: 12px; font-weight: 700; color: var(--green); white-space: nowrap; }
+
+/* ─── DOMAIN SCREEN ────────────────────────────────────────────────── */
+.domain-header {
+  padding: 14px 16px 10px;
+  background: var(--dc-bg, var(--green-lt));
+  border-bottom: 3px solid var(--dc, var(--green));
+  flex-shrink: 0;
+}
+.domain-header .dh-code { font-size: 11px; font-weight: 700; font-family: monospace; color: var(--dc, var(--green)); opacity: 0.7; }
+.domain-header .dh-name { font-size: 20px; font-weight: 800; color: var(--dc, var(--green)); letter-spacing: -0.3px; }
+.domain-header .dh-sub  { font-size: 13px; color: var(--text-dim); margin-top: 2px; }
+.domain-tabs {
+  display: flex;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.domain-tab {
+  flex: 1;
+  padding: 11px 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-align: center;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  user-select: none;
+}
+.domain-tab.active { color: var(--dc, var(--green)); border-bottom-color: var(--dc, var(--green)); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ─── P1 SCREEN ────────────────────────────────────────────────────── */
+.p1-card {
+  background: var(--bg-card);
+  border-radius: var(--r);
+  overflow: hidden;
+  margin-bottom: 10px;
+  border-left: 4px solid var(--red);
+  box-shadow: var(--shadow);
+}
+.p1-card-header {
+  background: var(--red-lt);
+  padding: 12px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.p1-card-header .ph-icon { font-size: 24px; flex-shrink: 0; }
+.p1-card-header .ph-body { flex: 1; }
+.p1-card-header .ph-orc { font-size: 11px; font-family: monospace; color: var(--red); font-weight: 700; }
+.p1-card-header .ph-name { font-size: 15px; font-weight: 700; color: var(--text); margin: 2px 0; line-height: 1.3; }
+.p1-card-header .ph-sla { font-size: 12px; color: var(--red); font-weight: 700; }
+.p1-call-btn {
+  width: 100%;
+  padding: 13px;
+  background: var(--red);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--touch);
+  transition: background 0.15s;
+}
+.p1-call-btn:active { background: #a53308; }
+
+/* ─── CALLOUT BLOCK ────────────────────────────────────────────────── */
+.callout {
+  border-radius: var(--r-sm);
+  padding: 11px 14px;
+  margin: 10px 0;
+  font-size: 13px;
+  line-height: 1.5;
+  font-style: italic;
+}
+.callout-green { background: var(--green-lt); border-left: 3px solid var(--green); color: var(--green); }
+.callout-amber  { background: var(--amber-lt); border-left: 3px solid var(--amber); color: var(--amber); }
+.callout-red    { background: var(--red-lt);   border-left: 3px solid var(--red);   color: var(--red); }
+
+/* ─── DEFECT TABLE ─────────────────────────────────────────────────── */
+.defect-row {
+  background: var(--bg-card);
+  border-radius: var(--r-sm);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: box-shadow 0.15s;
+}
+.defect-row:active { box-shadow: none; }
+.defect-row .dr-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.defect-row .dr-name { font-size: 14px; font-weight: 700; color: var(--text); flex: 1; line-height: 1.3; }
+.defect-row .dr-signs { font-size: 13px; color: var(--text-dim); margin-top: 4px; line-height: 1.4; }
+.defect-row .dr-detail { display: none; margin-top: 10px; }
+.defect-row.expanded .dr-detail { display: block; }
+.dr-section { margin-top: 8px; }
+.dr-section-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 4px; }
+.dr-section-text { font-size: 13px; color: var(--text-mid); line-height: 1.5; }
+
+/* ─── BOTTOM NAV ───────────────────────────────────────────────────── */
+.bottom-nav {
+  display: flex;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.nav-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 4px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  gap: 3px;
+  min-height: 52px;
+  transition: background 0.1s;
+}
+.nav-btn:active { background: var(--bg); }
+.nav-btn .nb-icon { font-size: 20px; }
+.nav-btn .nb-label { font-size: 10px; font-weight: 600; color: var(--text-dim); }
+.nav-btn.active .nb-label { color: var(--green); }
+.nav-btn.active .nb-icon { filter: saturate(3); }
+.nav-btn.nav-emergency .nb-icon { font-size: 22px; }
+.nav-btn.nav-emergency .nb-label { color: var(--red); font-weight: 700; }
+
+/* ─── MISC ─────────────────────────────────────────────────────────── */
+.divider { height: 1px; background: var(--border); margin: 4px 0; }
+.empty-state { text-align: center; padding: 40px 20px; color: var(--text-dim); font-size: 15px; }
+.empty-state .es-icon { font-size: 40px; margin-bottom: 10px; }
+.tag-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+
+/* ─── TOAST ────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--navy);
+  color: #fff;
+  padding: 10px 18px;
+  border-radius: 24px;
+  font-size: 14px;
+  font-weight: 600;
+  opacity: 0;
+  transition: all 0.25s;
+  pointer-events: none;
+  z-index: 100;
+  white-space: nowrap;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ─── HEADER ─────────────────────────────────────────────────── -->
+  <header class="app-header" id="appHeader">
+    <button class="back-btn" id="backBtn" style="display:none" onclick="goBack()">←</button>
+    <div class="header-title">
+      <h1 id="headerTitle">Хаузмастер</h1>
+      <p id="headerSub">Полевой справочник ОСИ РК</p>
+    </div>
+    <span class="header-badge" id="headerBadge">MVP</span>
+  </header>
+
+  <!-- ─── SCREEN: HOME ───────────────────────────────────────────── -->
+  <div class="screen active" id="screen-home">
+    <!-- Search -->
+    <div class="search-wrap">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="search" id="searchInput" placeholder="Симптом, ORC-код или ключевое слово..." autocomplete="off">
+      </div>
+      <div class="search-results" id="searchResults"></div>
+    </div>
+
+    <!-- P1 Strip -->
+    <div class="p1-strip" onclick="navigate('screen-emergency')">
+      <span class="p1-icon">🚨</span>
+      <div class="p1-text">
+        <strong>Аварийные P1 — угроза жизни</strong>
+        <span>Реагирование ≤ 2 часов · 19 карточек</span>
+      </div>
+      <span class="p1-arrow">›</span>
+    </div>
+
+    <!-- Main scroll -->
+    <div class="scroll-area">
+      <div class="section-label">Домены осмотра</div>
+      <div class="domain-grid" id="domainGrid"></div>
+
+      <div class="section-label">Быстрые действия</div>
+      <div class="card" style="margin-bottom:10px">
+        <div style="padding:4px 0">
+          <div class="checklist-item" onclick="navigate('screen-seasonal')">
+            <div class="ci-check">📅</div>
+            <div class="ci-body">
+              <div class="ci-name">Сезонный календарь</div>
+              <div class="ci-norm">Что делать в этом месяце</div>
+            </div>
+          </div>
+          <div class="checklist-item" onclick="navigate('screen-slatable')">
+            <div class="ci-check">⏱</div>
+            <div class="ci-body">
+              <div class="ci-name">SLA — сроки реагирования</div>
+              <div class="ci-norm">P1: 2ч · P2: 24ч · P3: 72ч · P4: 30 дн</div>
+            </div>
+          </div>
+          <div class="checklist-item" onclick="navigate('screen-glossary')">
+            <div class="ci-check">📖</div>
+            <div class="ci-body">
+              <div class="ci-name">Глоссарий</div>
+              <div class="ci-norm">Термины RU / KZ</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout callout-green">
+        <strong>Принцип №1:</strong> Устраняй причину, не симптом. Временная заплата без RCA — не выполненная работа.
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── SCREEN: DOMAIN ─────────────────────────────────────────── -->
+  <div class="screen" id="screen-domain">
+    <div class="domain-header" id="domainHeader">
+      <div class="dh-code" id="domainCode"></div>
+      <div class="dh-name" id="domainName"></div>
+      <div class="dh-sub" id="domainSub"></div>
+    </div>
+    <div class="domain-tabs" id="domainTabs">
+      <div class="domain-tab active" data-tab="checklist" onclick="switchTab(this,'checklist')">Чеклист</div>
+      <div class="domain-tab" data-tab="defects" onclick="switchTab(this,'defects')">Дефекты</div>
+      <div class="domain-tab" data-tab="rca" onclick="switchTab(this,'rca')">RCA</div>
+    </div>
+    <div class="scroll-area" style="padding-top:8px">
+      <!-- Checklist tab -->
+      <div class="tab-panel active" id="tab-checklist">
+        <div class="card">
+          <div class="checklist-progress" id="checklistProgress">
+            <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width:0%"></div></div>
+            <span class="progress-text" id="progressText">0 / 0</span>
+          </div>
+          <div id="checklistItems"></div>
+        </div>
+        <button style="width:100%;margin-top:10px;padding:13px;background:var(--navy);color:#fff;border:none;border-radius:var(--r);font-size:14px;font-weight:700;cursor:pointer" onclick="resetChecklist()">🔄 Сбросить чеклист</button>
+      </div>
+      <!-- Defects tab -->
+      <div class="tab-panel" id="tab-defects">
+        <div id="defectsList"></div>
+      </div>
+      <!-- RCA tab -->
+      <div class="tab-panel" id="tab-rca">
+        <div id="rcaContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── SCREEN: EMERGENCY ─────────────────────────────────────── -->
+  <div class="screen" id="screen-emergency">
+    <div style="background:var(--red);color:#fff;padding:12px 16px;font-size:13px;font-weight:600;flex-shrink:0;text-align:center">
+      ⚠️ P1 — КРИТИЧЕСКИЙ · Реагирование ≤ 2 часов
+    </div>
+    <div class="scroll-area" style="padding-top:10px">
+      <div id="emergencyCards"></div>
+    </div>
+  </div>
+
+  <!-- ─── SCREEN: SLA TABLE ─────────────────────────────────────── -->
+  <div class="screen" id="screen-slatable">
+    <div class="scroll-area">
+      <div class="section-label" style="margin-top:4px">Приоритеты реагирования</div>
+      <div id="slaCards"></div>
+      <div class="section-label">Тип финансирования</div>
+      <div id="finCards"></div>
+    </div>
+  </div>
+
+  <!-- ─── SCREEN: SEASONAL ──────────────────────────────────────── -->
+  <div class="screen" id="screen-seasonal">
+    <div class="scroll-area">
+      <div class="section-label" style="margin-top:4px">Сезонный календарь ТО</div>
+      <div id="seasonalCards"></div>
+    </div>
+  </div>
+
+  <!-- ─── SCREEN: GLOSSARY ──────────────────────────────────────── -->
+  <div class="screen" id="screen-glossary">
+    <div class="search-wrap" style="background:var(--navy-mid)">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input type="search" id="glossarySearch" placeholder="Поиск термина..." autocomplete="off">
+      </div>
+    </div>
+    <div class="scroll-area" style="padding-top:8px">
+      <div id="glossaryList"></div>
+    </div>
+  </div>
+
+  <!-- ─── SCREEN: CARD DETAIL ───────────────────────────────────── -->
+  <div class="screen" id="screen-card">
+    <div class="scroll-area" style="padding-top:8px">
+      <div id="cardDetail"></div>
+    </div>
+  </div>
+
+  <!-- ─── BOTTOM NAV ─────────────────────────────────────────────── -->
+  <nav class="bottom-nav">
+    <button class="nav-btn active" id="nav-home" onclick="navigate('screen-home')">
+      <span class="nb-icon">🏠</span><span class="nb-label">Главная</span>
+    </button>
+    <button class="nav-btn nav-emergency" id="nav-emergency" onclick="navigate('screen-emergency')">
+      <span class="nb-icon">🚨</span><span class="nb-label">P1</span>
+    </button>
+    <button class="nav-btn" id="nav-glossary" onclick="navigate('screen-glossary')">
+      <span class="nb-icon">📖</span><span class="nb-label">Глоссарий</span>
+    </button>
+  </nav>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+// ─── DATA ─────────────────────────────────────────────────────────────────────
+const DOMAINS = [
+  { code:'ROOF', name:'Кровля', sub:'Шатыр', icon:'🏗️', color:'#0F6E56', count:'29 кодов',
+    checklist:[
+      { id:'R1', name:'Кровельный ковёр — нет пузырей и трещин', norm:'Нет повреждений', orc:'ROOF-DMGE-001' },
+      { id:'R2', name:'Водосточные воронки — проходимость', norm:'Чистые, без засора и льда', orc:'ROOF-DRNG-001' },
+      { id:'R3', name:'Парапет — нет трещин, примыкание ковра цело', norm:'Нет трещин, ковёр не отслоен', orc:'ROOF-DMGE-003' },
+      { id:'R4', name:'Наружный водосток — желоб и труба', norm:'Нет повреждений и засоров', orc:'ROOF-DRNG-002' },
+      { id:'R5', name:'Ограждение кровли — все секции на месте', norm:'Не шатаются, не деформированы', orc:'ROOF-SFTY-002' },
+      { id:'R6', name:'Снегозадержатели — наличие и крепление', norm:'Установлены, закреплены', orc:'ROOF-SFTY-003' },
+      { id:'R7', name:'Примыкания к вентшахтам — герметичность', norm:'Нет щелей и отслоений', orc:'ROOF-LEAK-007' },
+      { id:'R8', name:'Аэраторы — не засорены, крышки на месте', norm:'Исправны', orc:'ROOF-PREV-003' },
+      { id:'R9', name:'Деформационные швы — герметик цел', norm:'Герметик не разрушен', orc:'ROOF-LEAK-005' },
+      { id:'R10',name:'Следы воды или пятна намокания', norm:'Нет следов намокания', orc:'ROOF-LEAK-006' },
+    ],
+    defects:[
+      { name:'Протечка в квартиру', signs:'Мокрый потолок, капель', rca:'Разрыв ковра, засор воронки, нарушение примыкания', orc:'ROOF-LEAK-001', p:'P1' },
+      { name:'Засор водосточной воронки', signs:'Лужа у воронки, медленный отвод', rca:'Мусор, листья, ледяная пробка', orc:'ROOF-DRNG-001', p:'P2' },
+      { name:'Угроза падения снега/льда', signs:'Сосульки >30 см, нависание снега', rca:'Теплопотери кровли, нет снегозадержателей', orc:'ROOF-SFTY-001', p:'P1' },
+      { name:'Вздутия кровельного ковра', signs:'Пузыри при ходьбе, хруст', rca:'Влага под ковром, потеря адгезии', orc:'ROOF-DMGE-001', p:'P3' },
+      { name:'Трещины парапета', signs:'Вертикальные трещины, отколы', rca:'Температурные деформации, износ', orc:'ROOF-DMGE-003', p:'P2' },
+    ],
+    rca:'Найди точку входа воды: начни с ближайшей воронки → примыкания к парапету → вентшахты → поверхность ковра. Правило 5 метров: точка входа воды обычно в радиусе 5 м от мокрого пятна на потолке с поправкой на уклон к воронке.',
+  },
+  { code:'HVAC', name:'Отопление / ИТП', sub:'Жылыту / ИЖТ', icon:'🔥', color:'#8B2500', count:'24 кода',
+    checklist:[
+      { id:'H1', name:'Давление на манометре ИТП — рабочее', norm:'3–6 бар (по проекту)', orc:'HVAC-ITP-004' },
+      { id:'H2', name:'Насосы ИТП — работают без шума', norm:'Без вибрации и шума', orc:'HVAC-ITP-001' },
+      { id:'H3', name:'Контроллер ИТП — нет аварийных сигналов', norm:'Зелёный индикатор', orc:'HVAC-ITP-002' },
+      { id:'H4', name:'Трубопроводы в подвале — нет утечек', norm:'Сухие трубы', orc:'HVAC-LEAK-001' },
+      { id:'H5', name:'Изоляция труб — целостность', norm:'Нет оголённых участков', orc:'HVAC-ITP-006' },
+      { id:'H6', name:'Стояки — равномерный нагрев по этажам', norm:'Одинаковая температура трубы', orc:'HVAC-BLNC-001' },
+      { id:'H7', name:'Воздухоотводчики — не засорены', norm:'Нет протечек', orc:'HVAC-BLNC-002' },
+      { id:'H8', name:'Балансировочные клапаны — положение', norm:'По проектному расходу', orc:'HVAC-BLNC-001' },
+    ],
+    defects:[
+      { name:'Нет отопления во всём МКД', signs:'Холодные стояки, нет давления', rca:'Авария ТСО, отказ насоса, перемерзание', orc:'HVAC-EMRG-003', p:'P1' },
+      { name:'Прорыв трубопровода (кипяток)', signs:'Пар, горячая вода, ожоговая опасность', rca:'Коррозия, гидроудар, износ', orc:'HVAC-EMRG-001', p:'P1' },
+      { name:'Часть МКД холодная', signs:'Холодные стояки одного подъезда', rca:'Разбалансировка, закрытый вентиль, завоздушивание', orc:'HVAC-BLNC-001', p:'P2' },
+      { name:'Гидроудары / шум в трубах', signs:'Стуки, хлопки, вибрация', rca:'Быстрое закрытие арматуры, воздух', orc:'HVAC-BLNC-005', p:'P3' },
+    ],
+    rca:'Диагностика холодного стояка: 1) Проверь запорный вентиль в подвале (открыт?). 2) Стравить воздух через кран Маевского сверху. 3) Проверить грязевой фильтр. 4) Регулировка балансировочного клапана.',
+  },
+  { code:'PLMB', name:'Водоснабжение / Канализация', sub:'Сумен жабдықтау', icon:'💧', color:'#185FA5', count:'26 кодов',
+    checklist:[
+      { id:'P1', name:'Водомерный узел — нет утечек, пломба цела', norm:'Сухие соединения', orc:'PLMB-LEAK-004' },
+      { id:'P2', name:'Стояки ХВС — нет коррозии и утечек', norm:'Нет ржавчины, вздутий, свищей', orc:'PLMB-CORR-001' },
+      { id:'P3', name:'Температура ГВС — не ниже нормы', norm:'Не менее 60°C', orc:'PLMB-WQLT-004' },
+      { id:'P4', name:'Запорная арматура — открывается/закрывается', norm:'Работает полностью', orc:'PLMB-ARMT-001' },
+      { id:'P5', name:'Канализационный стояк — нет запаха', norm:'Нет запаха, нет следов протечки', orc:'PLMB-CLGG-001' },
+      { id:'P6', name:'Коллектор — уклон не менее 2%', norm:'Уклон есть, нет провисания', orc:'PLMB-CLGG-002' },
+      { id:'P7', name:'Ревизии — доступны, не засорены', norm:'Крышки открываются', orc:'PLMB-CLGG-001' },
+      { id:'P8', name:'Ливнеприёмники — не засорены', norm:'Чистые, без мусора и ила', orc:'PLMB-CLGG-003' },
+    ],
+    defects:[
+      { name:'Прорыв стояка ХВС/ГВС', signs:'Активный поток воды', rca:'Коррозия, гидроудар, механическое повреждение', orc:'PLMB-EMRG-001', p:'P1' },
+      { name:'Канализация со сливом в МОП', signs:'Фекальные стоки выходят из ревизий', rca:'Критический засор коллектора', orc:'PLMB-EMRG-002', p:'P1' },
+      { name:'Засор канализационного стояка', signs:'Нет слива на нескольких этажах', rca:'Жировые отложения, посторонние предметы', orc:'PLMB-CLGG-001', p:'P2' },
+      { name:'Ржавая вода из ХВС', signs:'Окрашенная вода, жалобы жителей', rca:'Коррозия трубопровода', orc:'PLMB-WQLT-003', p:'P2' },
+    ],
+    rca:'Локализация засора канализации: опроси жителей какие этажи без слива → вход засора между крайними этажами. Прочистка: трос из ревизии в подвале снизу вверх.',
+  },
+  { code:'ELEC', name:'Электроснабжение', sub:'Электрмен жабдықтау', icon:'⚡', color:'#BA7517', count:'22 кода',
+    checklist:[
+      { id:'E1', name:'ВРУ — нет запаха горения, нет нагрева', norm:'Дверь закрыта, нет потемнений', orc:'ELEC-EMRG-002' },
+      { id:'E2', name:'Вводной автомат — включён', norm:'Не нагрет', orc:'ELEC-EMRG-001' },
+      { id:'E3', name:'Этажные щиты — закрыты, пломбы целы', norm:'Замки исправны', orc:'ELEC-CABL-002' },
+      { id:'E4', name:'Кабели МОП — нет видимых повреждений', norm:'Оболочка цела', orc:'ELEC-CABL-001' },
+      { id:'E5', name:'Освещение МОП — все этажи работают', norm:'Нет тёмных участков', orc:'ELEC-LITE-001' },
+      { id:'E6', name:'Аварийное освещение — работает', norm:'Светильники горят', orc:'ELEC-LITE-005' },
+      { id:'E7', name:'Нет несанкционированных подключений', norm:'Нет посторонних проводов в щитах', orc:'ELEC-CABL-002' },
+      { id:'E8', name:'Металлические конструкции — нет потенциала', norm:'Нет ощущения тока при касании', orc:'ELEC-GRND-002' },
+    ],
+    defects:[
+      { name:'Обесточивание всего МКД', signs:'Нет света в МОП, лифты стоят', rca:'Авария питающей линии, вводной автомат', orc:'ELEC-EMRG-001', p:'P1' },
+      { name:'Дым / запах горения из щитовой', signs:'Запах горелой изоляции, дым', rca:'Перегрев контактов, КЗ, влага', orc:'ELEC-EMRG-002', p:'P1' },
+      { name:'Потенциал на металлических конструкциях', signs:'Удар током при касании металла', rca:'Нарушение заземления, пробой изоляции', orc:'ELEC-GRND-002', p:'P1' },
+      { name:'Нет освещения подъезда', signs:'Весь подъезд тёмный', rca:'Выбит автомат, неисправное фотореле', orc:'ELEC-LITE-001', p:'P2' },
+    ],
+    rca:'ВАЖНО: при запахе горения из щита — обесточить от вышестоящего аппарата, не открывать горящий щит. Электромонтажные работы под напряжением — только сертифицированный электрик.',
+  },
+  { code:'BSMT', name:'Подвал', sub:'Жертөле', icon:'🏚️', color:'#4A4A4A', count:'14 кодов',
+    checklist:[
+      { id:'B1', name:'Дверь подвала — закрыта на замок', norm:'Замок исправен, нет взлома', orc:'BSMT-ACCS-001' },
+      { id:'B2', name:'Пол — нет воды и луж', norm:'Сухой или слегка влажный', orc:'BSMT-FLOD-001' },
+      { id:'B3', name:'Стены — нет активных протечек', norm:'Нет потоков воды', orc:'BSMT-FLOD-001' },
+      { id:'B4', name:'Продухи — открыты (апрель–октябрь)', norm:'Сетка не засорена', orc:'BSMT-VENT-001' },
+      { id:'B5', name:'Трубопроводы — нет утечек', norm:'Сухие трубы', orc:'HVAC-LEAK-001' },
+      { id:'B6', name:'Освещение — работает', norm:'Все лампы исправны', orc:'ELEC-LITE-004' },
+      { id:'B7', name:'Стены и потолок — нет плесени', norm:'Нет тёмных пятен', orc:'BSMT-MOLD-001' },
+      { id:'B8', name:'Признаки грызунов — нет', norm:'Нет помёта, нор', orc:'BSMT-PEST-001' },
+    ],
+    defects:[
+      { name:'Затопление подвала', signs:'Вода на полу, подтопленное оборудование', rca:'Паводок, утечка инженерных систем', orc:'BSMT-FLOD-001', p:'P1' },
+      { name:'Несанкционированный доступ', signs:'Взломанный замок, следы присутствия', rca:'Слабая запорная система', orc:'BSMT-ACCS-001', p:'P2' },
+      { name:'Плесень на конструкциях', signs:'Тёмные пятна на стенах', rca:'Хроническая влажность, нет вентиляции', orc:'BSMT-MOLD-001', p:'P3' },
+    ],
+    rca:'При затоплении подвала: СНАЧАЛА обесточить (риск КЗ в воде!), ПОТОМ откачивать. Никогда не входить в затопленный подвал при наличии электрооборудования без отключения питания.',
+  },
+  { code:'CMPL', name:'МОП', sub:'Ортақ пайдалану', icon:'🏢', color:'#4A2B8C', count:'16 кодов',
+    checklist:[
+      { id:'C1', name:'Пути эвакуации — свободны', norm:'Ширина прохода ≥ 1.2 м', orc:'CMPL-FIRE-001' },
+      { id:'C2', name:'Противопожарные двери — закрываются', norm:'Доводчик работает', orc:'CMPL-FIRE-002' },
+      { id:'C3', name:'Огнетушители — наличие и срок', norm:'На каждом этаже, не просрочен', orc:'CMPL-FIRE-003' },
+      { id:'C4', name:'Перила — устойчивы, все балясины целы', norm:'Нет шатания', orc:'CMPL-RAIL-001' },
+      { id:'C5', name:'Входная дверь подъезда — закрывается', norm:'Доводчик, замок, домофон работают', orc:'CMPL-DOOR-001' },
+      { id:'C6', name:'Освещение МОП — все этажи', norm:'Нет тёмных участков', orc:'ELEC-LITE-001' },
+      { id:'C7', name:'Потолок и стены — нет угрозы обрушения', norm:'Нет нависающей штукатурки', orc:'CMPL-COND-001' },
+      { id:'C8', name:'Санитарное состояние — нет мусора', norm:'Чисто, нет запаха', orc:'CMPL-SANIT-001' },
+    ],
+    defects:[
+      { name:'Загромождение путей эвакуации', signs:'Проход < 1.2 м, вещи у дверей', rca:'Нарушение правил пользования МОП', orc:'CMPL-FIRE-001', p:'P1' },
+      { name:'Неисправная противопожарная дверь', signs:'Дверь открыта, доводчик сломан', rca:'Износ доводчика, умышленная фиксация', orc:'CMPL-FIRE-002', p:'P1' },
+      { name:'Повреждение ограждения лестничного проёма', signs:'Отсутствие секции ограждения', rca:'Повреждение, вандализм', orc:'CMPL-RAIL-002', p:'P1' },
+      { name:'Шатающиеся перила', signs:'Перила качаются, балясины вырваны', rca:'Коррозия крепежа, механическое повреждение', orc:'CMPL-RAIL-001', p:'P2' },
+    ],
+    rca:'Загромождение эвакуации — P1. Вручить письменное предписание жильцу немедленно. Срок устранения — 24 часа. При повторении — акт нарушения председателю ОСИ.',
+  },
+  { code:'FACD', name:'Фасад', sub:'Фасад', icon:'🏛️', color:'#3B6D11', count:'13 кодов',
+    checklist:[
+      { id:'F1', name:'Штукатурный слой — нет нависающих фрагментов', norm:'Нет пузырей и отслоений >0.3 м²', orc:'FACD-FALL-001' },
+      { id:'F2', name:'Балконные плиты — нет трещин поперёк', norm:'Нет оголения арматуры', orc:'FACD-FALL-002' },
+      { id:'F3', name:'Балконные ограждения — устойчивы', norm:'Нет шатания, все секции на месте', orc:'FACD-BLCN-001' },
+      { id:'F4', name:'Козырьки над входами — целы', norm:'Нет трещин, деформаций', orc:'FACD-COLK-002' },
+      { id:'F5', name:'Межпанельные швы — герметичность', norm:'Нет открытых щелей', orc:'STRCT-JONT-001' },
+      { id:'F6', name:'Наружные стены — нет карт намокания', norm:'Нет тёмных пятен увлажнения', orc:'FACD-WTRD-001' },
+    ],
+    defects:[
+      { name:'Угроза обрушения элемента фасада', signs:'Нависающий карниз, плита в предаварийном состоянии', rca:'Коррозия крепежа, замерзание воды в трещинах', orc:'FACD-FALL-001', p:'P1' },
+      { name:'Угроза обрушения балконной плиты', signs:'Трещины поперёк плиты, провисание', rca:'Коррозия арматуры, перегрузка', orc:'FACD-FALL-002', p:'P1' },
+      { name:'Шатание балконного ограждения', signs:'Перила качаются или оторваны', rca:'Коррозия анкеров', orc:'FACD-BLCN-001', p:'P1' },
+      { name:'Отслоение штукатурки >1 м²', signs:'Пузыри, куски на земле', rca:'Намокание, температурные деформации', orc:'FACD-DMGE-001', p:'P2' },
+    ],
+    rca:'При обнаружении нависающих элементов: 1) ограничить пешеходную зону немедленно (лента, конусы), 2) вызвать промышленных альпинистов, 3) не ждать — падение может произойти в любой момент.',
+  },
+  { code:'YARD', name:'Придомовая территория', sub:'Маңайлық аумақ', icon:'🌿', color:'#0D6B75', count:'14 кодов',
+    checklist:[
+      { id:'Y1', name:'Отмостка — нет трещин, уклон от здания', norm:'Уклон ≥ 1%, нет проседания', orc:'YARD-PAVT-001' },
+      { id:'Y2', name:'Тротуары — нет ям и провалов', norm:'Нет провалов, плитка не выбита', orc:'YARD-SAFE-001' },
+      { id:'Y3', name:'Детская площадка — нет острых кромок', norm:'Крепежи затянуты, нет сломанных элементов', orc:'YARD-SAFE-002' },
+      { id:'Y4', name:'Дренажные лотки — не засорены', norm:'Нет мусора и ила', orc:'YARD-DRAN-001' },
+      { id:'Y5', name:'Освещение двора — работает', norm:'Все фонари исправны', orc:'YARD-LITE-001' },
+      { id:'Y6', name:'Деревья — нет аварийных', norm:'Нет сухостоя над проходами', orc:'YARD-GRDN-001' },
+    ],
+    defects:[
+      { name:'Яма или провал на тротуаре', signs:'Провал на пешеходной зоне', rca:'Подмыв грунта, деградация основания', orc:'YARD-SAFE-001', p:'P1' },
+      { name:'Травмоопасная детская площадка', signs:'Острые края, сломанные элементы МАФ', rca:'Износ, вандализм', orc:'YARD-SAFE-002', p:'P1' },
+      { name:'Подтопление территории', signs:'Лужи стоят более суток', rca:'Засор дренажа, нарушение уклонов', orc:'YARD-DRAN-002', p:'P2' },
+    ],
+    rca:'Провал грунта во дворе: сначала ограждение (лента, конусы), потом выяснение причины. Если под провалом проходит трубопровод — вызвать соответствующую аварийную службу.',
+  },
+  { code:'LIFT', name:'Лифт', sub:'Лифт', icon:'🛗', color:'#1F3864', count:'10 кодов',
+    checklist:[
+      { id:'L1', name:'Лифт работает — кабина вызывается', norm:'Кабина отвечает на все кнопки', orc:'LIFT-EMRG-002' },
+      { id:'L2', name:'Двери кабины — закрываются и открываются', norm:'Нет задержки, нет заклинивания', orc:'LIFT-SAFE-001' },
+      { id:'L3', name:'Аварийное освещение — работает', norm:'Лампа горит при отключении', orc:'LIFT-SAFE-003' },
+      { id:'L4', name:'Переговорное устройство — работает', norm:'Связь с диспетчером установлена', orc:'LIFT-SAFE-004' },
+      { id:'L5', name:'Разрешение на эксплуатацию — действует', norm:'Документ актуален', orc:'LIFT-INSP-002' },
+      { id:'L6', name:'Журнал ТО лифтовой организации', norm:'Последняя запись не старше месяца', orc:'LIFT-INSP-001' },
+    ],
+    defects:[
+      { name:'Человек застрял в лифте', signs:'Кабина остановилась с пассажиром', rca:'Отключение питания, срабатывание ловителей', orc:'LIFT-EMRG-001', p:'P1' },
+      { name:'Неисправные двери кабины', signs:'Двери не закрываются', rca:'Износ дверного привода', orc:'LIFT-SAFE-001', p:'P1' },
+      { name:'Лифт не работает', signs:'Кабина не вызывается', rca:'Питание, электроника, механика', orc:'LIFT-EMRG-002', p:'P2' },
+    ],
+    rca:'Лифт — объект повышенной опасности. Хаузмастер НЕ ремонтирует лифт самостоятельно. При любой неисправности — немедленный вызов лифтовой организации. При застрявшем пассажире: не пытаться открыть двери вручную.',
+  },
+];
+
+const EMERGENCY_CARDS = [
+  { orc:'HVAC-EMRG-001', name:'Прорыв трубопровода отопления (кипяток)', icon:'♨️', sla:'≤ 2 ч',
+    steps:['НЕ входить в зону горячей воды — ожоговая опасность','Перекрыть ИТП снаружи зоны затопления','Вызвать АДС','Уведомить председателя ОСИ','Организовать откачку после остывания'] },
+  { orc:'PLMB-EMRG-001', name:'Прорыв стояка ХВС или ГВС', icon:'🌊', sla:'≤ 2 ч',
+    steps:['Перекрыть вентиль стояка в подвале','Если вентиль не держит — перекрыть ввод ХВС/ГВС в здание','Предупредить жителей затрагиваемых квартир','Вызвать АДС или сантехника','Составить акт и акт ущерба по квартирам'] },
+  { orc:'PLMB-EMRG-002', name:'Канализация со сливом в МОП', icon:'🚫', sla:'≤ 2 ч',
+    steps:['Ограничить доступ в зону — биологическая опасность','Определить источник засора','Вызвать прочистную службу','Организовать дезинфекцию после устранения','Проверить работу стояков'] },
+  { orc:'ELEC-EMRG-001', name:'Полное обесточивание МКД', icon:'⚡', sla:'≤ 2 ч',
+    steps:['Проверить ВРУ: положение вводного автомата','Если выбит — включить 1 раз. Если снова выбивает — не включать','Вызвать энергоснабжающую организацию','Уведомить жителей','При морозе — контролировать ИТП'] },
+  { orc:'ELEC-EMRG-002', name:'Дым или горение из щитовой', icon:'🔥', sla:'≤ 2 ч',
+    steps:['Вызвать пожарную охрану (101) — немедленно','Обесточить щит от вышестоящего аппарата','НЕ открывать горящий щит','Ограничить доступ людей','Вызвать электромонтажную организацию после ликвидации'] },
+  { orc:'EMRG-GAS-001', name:'Запах газа в здании', icon:'💨', sla:'≤ 2 ч',
+    steps:['НЕ включать и не выключать электроприборы и свет','Вызвать газовую службу (104) — с улицы','Открыть окна для проветривания','Эвакуировать жильцов с затронутых этажей','Встретить газовую службу у входа'] },
+  { orc:'EMRG-FIRE-001', name:'Пожар в МКД', icon:'🚒', sla:'≤ 2 ч',
+    steps:['Вызвать пожарных (101) немедленно','Объявить эвакуацию','Открыть все эвакуационные выходы','НЕ пользоваться лифтом','Встретить пожарных у здания'] },
+  { orc:'LIFT-EMRG-001', name:'Человек застрял в лифте', icon:'🛗', sla:'≤ 2 ч',
+    steps:['Вызвать лифтовую аварийную службу немедленно','Установить голосовой контакт с пассажиром','НЕ пытаться открыть двери вручную','Встретить лифтовую бригаду','Составить акт после эвакуации'] },
+  { orc:'STRCT-CRIT-001', name:'Трещина в несущей стене >3 мм', icon:'⚠️', sla:'≤ 2 ч',
+    steps:['Установить гипсовые маяки — зафиксировать дату','Ограничить нагрузку на конструкцию','Вызвать инженера-конструктора немедленно','Уведомить жителей прилегающих квартир','При аварийном состоянии — эвакуация по решению конструктора'] },
+  { orc:'FACD-FALL-001', name:'Угроза обрушения элемента фасада', icon:'🏚️', sla:'≤ 2 ч',
+    steps:['Ограничить пешеходную зону немедленно (лента, конусы)','Уведомить жителей о запрете прохода под фасадом','Вызвать промышленных альпинистов для закрепления или демонтажа','Составить акт угрозы обрушения','Передать председателю ОСИ для CAPEX-решения'] },
+];
+
+const GLOSSARY = [
+  { ru:'ОСИ', kz:'МИБ — Мүлік иелері бірлестігі', def:'Объединение собственников имущества — орган управления МКД по реформе 2022 г.' },
+  { ru:'МКД', kz:'КПТ — Көп пәтерлі тұрғын үй', def:'Многоквартирный жилой дом — здание с 3+ квартирами и общим имуществом.' },
+  { ru:'Хаузмастер', kz:'Хаузмастер', def:'Технический специалист ОСИ, ответственный за обслуживание МКД.' },
+  { ru:'ИТП', kz:'ИЖТ — Жеке жылу торабы', def:'Индивидуальный тепловой пункт — узел присоединения системы отопления к тепловой сети.' },
+  { ru:'ORC', kz:'ОСИ өтінімінің коды', def:'OSI Request Code — уникальный код заявки: ДОМЕН-ПОДТИП-НОМЕР.' },
+  { ru:'SLA', kz:'Қызмет деңгейі туралы келісім', def:'Service Level Agreement — нормативный срок реагирования на заявку.' },
+  { ru:'RCA', kz:'Түбегейлі себептерді талдау', def:'Root Cause Analysis — анализ корневых причин дефекта.' },
+  { ru:'CAPEX', kz:'Күрделі шығындар', def:'Капитальные расходы — замена/восстановление с продлением срока службы >1 года.' },
+  { ru:'OPEX', kz:'Операциялық шығындар', def:'Операционные расходы — текущее ТО в рамках бюджета.' },
+  { ru:'IDI', kz:'Ақаудың деградация индексі', def:'Индекс деградации дефекта (1–5) — скорость нарастания ущерба без вмешательства.' },
+  { ru:'МОП', kz:'Ортақ пайдалану орындары', def:'Места общего пользования — лестничные клетки, холлы, коридоры, технические помещения.' },
+  { ru:'ТСО', kz:'Жылу желісі ұйымы', def:'Теплоснабжающая организация — поставщик тепла до ввода в ИТП.' },
+  { ru:'АДС', kz:'Авариялық-диспетчерлік қызмет', def:'Аварийно-диспетчерская служба — круглосуточное оперативное реагирование на P1–P2.' },
+  { ru:'ЖК РК', kz:'ҚР Тұрғын үй кодексі', def:'Жилищный кодекс Республики Казахстан — основной закон управления МКД.' },
+  { ru:'Стояк', kz:'Тік шу', def:'Вертикальный трубопровод через все этажи — отопление, ХВС, ГВС, канализация.' },
+  { ru:'Розлив', kz:'Горизонталь тарату', def:'Горизонтальный трубопровод в подвале — распределяет теплоноситель по стоякам.' },
+  { ru:'Парапет', kz:'Парапет', def:'Вертикальная стенка по периметру плоской кровли. Зона риска №1 для протечек.' },
+  { ru:'Отмостка', kz:'Дренаждық жол', def:'Водонепроницаемое покрытие по периметру здания с уклоном от стен. Защита фундамента.' },
+  { ru:'Продух', kz:'Желдеткіш тесік', def:'Отверстие в цоколе для вентиляции подвала. Должны быть открыты апрель–октябрь.' },
+  { ru:'ВРУ', kz:'ВТҚ', def:'Вводно-распределительное устройство — главный электрощит здания.' },
+];
+
+const SEASONAL = [
+  { month:'Январь–Февраль', season:'Зима ❄️', color:'#1A5E8A',
+    tasks:['Мониторинг снеговой нагрузки на кровле','Контроль обледенения карнизов и воронок','При сосульках >30 см — ограждение зоны и вызов кровельщиков'],
+    orc:'ROOF-SFTY-001 · ROOF-PREV-001' },
+  { month:'Март', season:'Ранняя весна 🌡️', color:'#1A6B4A',
+    tasks:['Первый осмотр кровли после зимы','Расчистка воронок от льда','Осмотр ковра после оттепелей — трещины по пузырям'],
+    orc:'ROOF-INSP-003 · ROOF-DRNG-001' },
+  { month:'Апрель', season:'Весна 🌱', color:'#1A6B4A',
+    tasks:['ОБЯЗАТЕЛЬНЫЙ плановый осмотр кровли по чеклисту R.1','Весенний осмотр подвала после паводка','Прочистка водостоков от зимних отложений','Весенний осмотр фасада и придомовой территории'],
+    orc:'ROOF-INSP-001 · BSMT-INSP-002 · PLMB-INSP-002' },
+  { month:'Май–Июнь', season:'Поздняя весна 🌿', color:'#2E7D32',
+    tasks:['Выполнение ремонтных работ по кровле (оптимальная температура)','Прочистка ливнеприёмников','Осмотр МОП и лестничных клеток'],
+    orc:'ROOF-LEAK · CMPL-INSP-001' },
+  { month:'Июль–Август', season:'Лето ☀️', color:'#BA7517',
+    tasks:['Визуальный осмотр кровли: новые пузыри и вздутия','Контроль водостоков после ливней','Завершение ремонтов до сезона дождей'],
+    orc:'ROOF-DMGE-001 · ROOF-INSP-003' },
+  { month:'Сентябрь', season:'Осень 🍂', color:'#BA7517',
+    tasks:['ОБЯЗАТЕЛЬНЫЙ плановый осенний осмотр кровли','Прочистка водостоков от листьев','Ревизия аэраторов кровли','Устранение всех дефектов ДО морозов'],
+    orc:'ROOF-INSP-002 · ROOF-DRNG-001/002' },
+  { month:'Октябрь', season:'Осень 🍁', color:'#C8400A',
+    tasks:['Последний шанс ремонтов с мастиками (t° >+5°C)','Проверка снегозадержателей','Завершить все ремонтные работы на кровле','Первые заморозки: контроль воронок'],
+    orc:'ROOF-SFTY-003 · ROOF-PREV-002' },
+  { month:'Ноябрь–Декабрь', season:'Зима ❄️', color:'#1A5E8A',
+    tasks:['Мониторинг снеговой нагрузки при снегопадах','Контроль обледенения карнизов','Проверка готовности ИТП к сильным морозам'],
+    orc:'ROOF-DRNG-005 · HVAC-INSP-001' },
+];
+
+const SLA_DATA = [
+  { p:'P1', label:'КРИТИЧЕСКИЙ', color:'#C8400A', bg:'#FDECEA', sla:'≤ 2 часа',
+    desc:'Угроза жизни и здоровью людей. Активное разрушение конструкций. Прекращение жизнеобеспечения в мороз.',
+    examples:['Прорыв трубы кипятка','Обесточивание МКД','Застрявший в лифте','Трещина в несущей стене >3 мм'] },
+  { p:'P2', label:'ВЫСОКИЙ', color:'#B87010', bg:'#FFF3CD', sla:'≤ 24 часа',
+    desc:'Ущерб нарастает — риск повреждения имущества или распространения дефекта.',
+    examples:['Протечка кровли в квартиру','Засор канализационного стояка','Нет освещения в подъезде'] },
+  { p:'P3', label:'СРЕДНИЙ', color:'#3B6D11', bg:'#EAF3DE', sla:'≤ 72 часа',
+    desc:'Плановое устранение. Дефект стабилен, жизнеобеспечение не нарушено.',
+    examples:['Вздутия кровельного ковра','Плесень в подвале','Повреждение отмостки'] },
+  { p:'P4', label:'НИЗКИЙ', color:'#185FA5', bg:'#E6F1FB', sla:'≤ 30 суток',
+    desc:'Включение в план планово-предупредительного обслуживания следующего цикла.',
+    examples:['Плановые осмотры','Подготовка к зиме','Профилактические работы'] },
+];
+
+// ─── STATE ────────────────────────────────────────────────────────────────────
+let currentScreen = 'screen-home';
+let screenHistory = [];
+let activeDomain = null;
+let checkedItems = {};
+
+// ─── NAVIGATION ───────────────────────────────────────────────────────────────
+function navigate(screenId, push = true) {
+  if (push && currentScreen !== screenId) screenHistory.push(currentScreen);
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(screenId).classList.add('active');
+  currentScreen = screenId;
+  updateHeader(screenId);
+  document.getElementById('backBtn').style.display = screenId === 'screen-home' ? 'none' : 'block';
+  document.getElementById('nav-home').classList.toggle('active', screenId === 'screen-home');
+  document.getElementById('nav-emergency').classList.toggle('active', screenId === 'screen-emergency');
+  document.getElementById('nav-glossary').classList.toggle('active', screenId === 'screen-glossary');
+}
+
+function goBack() {
+  if (screenHistory.length > 0) {
+    const prev = screenHistory.pop();
+    navigate(prev, false);
+  } else {
+    navigate('screen-home', false);
+  }
+}
+
+function updateHeader(screenId) {
+  const titles = {
+    'screen-home': ['Хаузмастер', 'Полевой справочник ОСИ РК'],
+    'screen-emergency': ['Аварийные P1', '≤ 2 часа · 19 карточек'],
+    'screen-slatable': ['SLA — Сроки реагирования', 'P1–P4 · OPEX / CAPEX / EVAL'],
+    'screen-seasonal': ['Сезонный календарь', 'Что делать каждый месяц'],
+    'screen-glossary': ['Глоссарий', 'Термины RU / KZ'],
+    'screen-card': ['Карточка заявки', ''],
+    'screen-domain': activeDomain ? [activeDomain.code + ' — ' + activeDomain.name, activeDomain.count] : ['Домен', ''],
+  };
+  const [title, sub] = titles[screenId] || ['Хаузмастер', ''];
+  document.getElementById('headerTitle').textContent = title;
+  document.getElementById('headerSub').textContent = sub;
+  document.getElementById('headerBadge').style.display = screenId === 'screen-home' ? 'inline' : 'none';
+}
+
+// ─── BUILD HOME ───────────────────────────────────────────────────────────────
+function buildHome() {
+  const grid = document.getElementById('domainGrid');
+  grid.innerHTML = '';
+  DOMAINS.forEach(d => {
+    const tile = document.createElement('div');
+    tile.className = 'domain-tile';
+    tile.style.setProperty('--dc', d.color);
+    tile.innerHTML = `
+      <span class="dt-icon">${d.icon}</span>
+      <span class="dt-code">${d.code}</span>
+      <span class="dt-name">${d.name}</span>
+      <span class="dt-meta">${d.count}</span>`;
+    tile.onclick = () => openDomain(d);
+    grid.appendChild(tile);
+  });
+}
+
+// ─── BUILD EMERGENCY ─────────────────────────────────────────────────────────
+function buildEmergency() {
+  const container = document.getElementById('emergencyCards');
+  container.innerHTML = '';
+  EMERGENCY_CARDS.forEach(card => {
+    const el = document.createElement('div');
+    el.className = 'p1-card';
+    el.innerHTML = `
+      <div class="p1-card-header" onclick="this.parentElement.querySelector('.exp-content').style.display = this.parentElement.querySelector('.exp-content').style.display==='none'?'block':'none'">
+        <div class="ph-icon">${card.icon}</div>
+        <div class="ph-body">
+          <div class="ph-orc">${card.orc}</div>
+          <div class="ph-name">${card.name}</div>
+          <div class="ph-sla">SLA: ${card.sla}</div>
+        </div>
+      </div>
+      <div class="exp-content" style="display:none;padding:12px 14px">
+        <ol class="step-list">
+          ${card.steps.map(s => `<li>${s}</li>`).join('')}
+        </ol>
+      </div>`;
+    container.appendChild(el);
+  });
+}
+
+// ─── OPEN DOMAIN ─────────────────────────────────────────────────────────────
+function openDomain(domain) {
+  activeDomain = domain;
+  document.documentElement.style.setProperty('--dc', domain.color);
+  document.documentElement.style.setProperty('--dc-bg', domain.color + '18');
+
+  document.getElementById('domainCode').textContent = domain.code;
+  document.getElementById('domainName').textContent = domain.name;
+  document.getElementById('domainSub').textContent = domain.sub + ' · ' + domain.count;
+  document.getElementById('domainHeader').style.setProperty('--dc', domain.color);
+  document.getElementById('domainHeader').style.setProperty('--dc-bg', domain.color + '18');
+  document.querySelectorAll('.domain-tab').forEach(t => {
+    t.style.setProperty('--dc', domain.color);
+  });
+
+  // Reset tabs
+  document.querySelectorAll('.domain-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelector('.domain-tab[data-tab="checklist"]').classList.add('active');
+  document.getElementById('tab-checklist').classList.add('active');
+
+  // Build checklist
+  buildChecklist(domain);
+  buildDefects(domain);
+  buildRCA(domain);
+
+  navigate('screen-domain');
+}
+
+function buildChecklist(domain) {
+  const container = document.getElementById('checklistItems');
+  container.innerHTML = '';
+  domain.checklist.forEach(item => {
+    const key = domain.code + '-' + item.id;
+    const checked = !!checkedItems[key];
+    const el = document.createElement('div');
+    el.className = 'checklist-item' + (checked ? ' checked' : '');
+    el.dataset.key = key;
+    el.innerHTML = `
+      <div class="ci-check">${checked ? '✓' : ''}</div>
+      <div class="ci-body">
+        <div class="ci-name">${item.name}</div>
+        <div class="ci-norm">Норма: ${item.norm}</div>
+        <div class="ci-orc">${item.orc}</div>
+      </div>`;
+    el.onclick = () => toggleCheck(el, key, domain);
+    container.appendChild(el);
+  });
+  updateProgress(domain);
+}
+
+function toggleCheck(el, key, domain) {
+  checkedItems[key] = !checkedItems[key];
+  el.classList.toggle('checked', checkedItems[key]);
+  el.querySelector('.ci-check').textContent = checkedItems[key] ? '✓' : '';
+  updateProgress(domain);
+}
+
+function updateProgress(domain) {
+  const total = domain.checklist.length;
+  const done  = domain.checklist.filter(i => checkedItems[domain.code + '-' + i.id]).length;
+  const pct   = total ? Math.round(done / total * 100) : 0;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent = done + ' / ' + total;
+  if (done === total && total > 0) showToast('✓ Осмотр завершён!');
+}
+
+function resetChecklist() {
+  if (!activeDomain) return;
+  activeDomain.checklist.forEach(i => { delete checkedItems[activeDomain.code + '-' + i.id]; });
+  buildChecklist(activeDomain);
+  showToast('Чеклист сброшен');
+}
+
+function buildDefects(domain) {
+  const container = document.getElementById('defectsList');
+  container.innerHTML = '';
+  domain.defects.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'defect-row';
+    const pcls = 'badge badge-' + d.p.toLowerCase();
+    el.innerHTML = `
+      <div class="dr-header">
+        <div class="dr-name">${d.name}</div>
+        <span class="${pcls}">${d.p}</span>
+      </div>
+      <div class="dr-signs">${d.signs}</div>
+      <div class="dr-detail">
+        <div class="dr-section">
+          <div class="dr-section-label">Корневая причина (RCA)</div>
+          <div class="dr-section-text">${d.rca}</div>
+        </div>
+        <div class="dr-section" style="margin-top:8px">
+          <div class="dr-section-label">ORC-код</div>
+          <div class="dr-section-text" style="font-family:monospace;font-weight:700;color:var(--dc)">${d.orc}</div>
+        </div>
+      </div>`;
+    el.onclick = () => el.classList.toggle('expanded');
+    container.appendChild(el);
+  });
+}
+
+function buildRCA(domain) {
+  const container = document.getElementById('rcaContent');
+  container.innerHTML = `
+    <div class="callout callout-green" style="margin-bottom:12px">
+      <strong>Ключевой принцип домена ${domain.code}:</strong><br>${domain.rca}
+    </div>
+    <div style="margin-top:12px;font-size:12px;color:var(--text-dim);font-style:italic">
+      Полные RCA-деревья для домена ${domain.code} доступны в Томе III пособия (секция ${domain.code.charAt(0)}.6–${domain.code.charAt(0)}.8).
+    </div>`;
+}
+
+function switchTab(el, tab) {
+  document.querySelectorAll('.domain-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('tab-' + tab).classList.add('active');
+}
+
+// ─── SLA TABLE ────────────────────────────────────────────────────────────────
+function buildSLATable() {
+  const c1 = document.getElementById('slaCards');
+  c1.innerHTML = '';
+  SLA_DATA.forEach(s => {
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.style.marginBottom = '10px';
+    el.style.borderLeft = '4px solid ' + s.color;
+    el.innerHTML = `
+      <div style="padding:12px 14px;background:${s.bg};display:flex;align-items:center;gap:10px">
+        <div style="min-width:36px;height:36px;background:${s.color};color:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px">${s.p}</div>
+        <div>
+          <div style="font-size:16px;font-weight:700;color:${s.color}">${s.label}</div>
+          <div style="font-size:13px;font-weight:700;color:${s.color}">SLA: ${s.sla}</div>
+        </div>
+      </div>
+      <div style="padding:10px 14px;font-size:14px;color:var(--text-mid);border-bottom:1px solid var(--border)">${s.desc}</div>
+      <div style="padding:10px 14px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px">Примеры</div>
+        <ul class="bullet-list">${s.examples.map(e => `<li>${e}</li>`).join('')}</ul>
+      </div>`;
+    c1.appendChild(el);
+  });
+
+  const c2 = document.getElementById('finCards');
+  c2.innerHTML = '';
+  [
+    { code:'OPEX', color:'#1A6B4A', bg:'#E8F4F0', def:'Операционные расходы. Работы в рамках бюджета ТО. Решение принимает хаузмастер.' },
+    { code:'CAPEX', color:'#C8400A', bg:'#FDECEA', def:'Капитальные расходы. Замена с продлением срока службы. Решение — общее собрание ОСИ.' },
+    { code:'EVAL', color:'#B87010', bg:'#FFF3CD', def:'Требует оценки. Объём и стоимость определяются после обследования. Тип финансирования уточняется.' },
+  ].forEach(f => {
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.style.marginBottom = '8px';
+    el.innerHTML = `
+      <div style="padding:12px 14px;background:${f.bg};display:flex;align-items:center;gap:10px">
+        <span class="badge badge-${f.code.toLowerCase()}" style="font-size:14px;padding:5px 14px">${f.code}</span>
+        <div style="font-size:14px;color:var(--text-mid);line-height:1.4">${f.def}</div>
+      </div>`;
+    c2.appendChild(el);
+  });
+}
+
+// ─── SEASONAL ─────────────────────────────────────────────────────────────────
+function buildSeasonal() {
+  const container = document.getElementById('seasonalCards');
+  container.innerHTML = '';
+  const now = new Date().getMonth(); // 0-11
+  const monthMap = { 0:0,1:0, 2:1, 3:2, 4:3,5:3, 6:4,7:4, 8:5, 9:6, 10:7,11:7 };
+  const currentIdx = monthMap[now] ?? 0;
+
+  SEASONAL.forEach((s, idx) => {
+    const isCurrent = idx === currentIdx;
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.style.marginBottom = '10px';
+    if (isCurrent) el.style.boxShadow = '0 0 0 2px ' + s.color;
+    el.innerHTML = `
+      <div style="padding:12px 14px;background:${s.color}18;border-bottom:3px solid ${s.color};display:flex;align-items:center;justify-content:space-between">
+        <div>
+          <div style="font-size:16px;font-weight:800;color:${s.color}">${s.month}</div>
+          <div style="font-size:13px;color:var(--text-dim)">${s.season}</div>
+        </div>
+        ${isCurrent ? `<span style="background:${s.color};color:#fff;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700">СЕЙЧАС</span>` : ''}
+      </div>
+      <div style="padding:10px 14px">
+        <ul class="bullet-list">${s.tasks.map(t => `<li>${t}</li>`).join('')}</ul>
+        <div style="margin-top:8px;font-size:11px;font-family:monospace;color:${s.color};font-weight:700">${s.orc}</div>
+      </div>`;
+    container.appendChild(el);
+  });
+}
+
+// ─── GLOSSARY ─────────────────────────────────────────────────────────────────
+function buildGlossary(filter = '') {
+  const container = document.getElementById('glossaryList');
+  container.innerHTML = '';
+  const q = filter.toLowerCase();
+  const items = filter ? GLOSSARY.filter(g =>
+    g.ru.toLowerCase().includes(q) || g.kz.toLowerCase().includes(q) || g.def.toLowerCase().includes(q)
+  ) : GLOSSARY;
+
+  if (!items.length) {
+    container.innerHTML = '<div class="empty-state"><div class="es-icon">🔍</div>Термин не найден</div>';
+    return;
+  }
+  items.forEach(g => {
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.style.marginBottom = '8px';
+    el.innerHTML = `
+      <div style="padding:12px 14px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:4px">
+          <span style="font-size:16px;font-weight:800;color:var(--navy)">${g.ru}</span>
+          <span style="font-size:12px;color:var(--green);font-style:italic;text-align:right;line-height:1.3">${g.kz}</span>
+        </div>
+        <div style="font-size:14px;color:var(--text-mid);line-height:1.5">${g.def}</div>
+      </div>`;
+    container.appendChild(el);
+  });
+}
+
+// ─── SEARCH ───────────────────────────────────────────────────────────────────
+const ALL_ITEMS = [];
+DOMAINS.forEach(d => {
+  d.checklist.forEach(c => ALL_ITEMS.push({
+    code: c.orc, name: c.name, type: d.code, p: null, domain: d
+  }));
+  d.defects.forEach(def => ALL_ITEMS.push({
+    code: def.orc, name: def.name, type: def.p + ' · ' + d.code, p: def.p, domain: d
+  }));
+});
+EMERGENCY_CARDS.forEach(e => ALL_ITEMS.push({
+  code: e.orc, name: e.name, type: 'P1 АВАРИЙНЫЙ', p:'P1', emergency: e
+}));
+
+function doSearch(q) {
+  const results = document.getElementById('searchResults');
+  if (!q || q.length < 2) { results.classList.remove('visible'); return; }
+  const matches = ALL_ITEMS.filter(i =>
+    i.name.toLowerCase().includes(q.toLowerCase()) ||
+    i.code.toLowerCase().includes(q.toLowerCase()) ||
+    i.type.toLowerCase().includes(q.toLowerCase())
+  ).slice(0, 8);
+
+  if (!matches.length) { results.classList.remove('visible'); return; }
+  results.innerHTML = '';
+  matches.forEach(m => {
+    const el = document.createElement('div');
+    el.className = 'search-result-item';
+    if (m.p) el.style.borderLeftColor = m.p === 'P1' ? 'var(--red)' : m.p === 'P2' ? 'var(--amber)' : 'var(--green)';
+    el.innerHTML = `
+      <div class="sri-code">${m.code}</div>
+      <div class="sri-name">${m.name}</div>
+      <div class="sri-meta">${m.type}</div>`;
+    el.onclick = () => {
+      results.classList.remove('visible');
+      document.getElementById('searchInput').value = '';
+      if (m.emergency) {
+        navigate('screen-emergency');
+      } else if (m.domain) {
+        openDomain(m.domain);
+      }
+    };
+    results.appendChild(el);
+  });
+  results.classList.add('visible');
+}
+
+// ─── TOAST ────────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  buildHome();
+  buildEmergency();
+  buildSLATable();
+  buildSeasonal();
+  buildGlossary();
+
+  document.getElementById('searchInput').addEventListener('input', e => doSearch(e.target.value));
+  document.getElementById('glossarySearch').addEventListener('input', e => buildGlossary(e.target.value));
+
+  // Close search on outside tap
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.search-wrap')) {
+      document.getElementById('searchResults').classList.remove('visible');
+    }
+  });
+
+  // Hardware back on Android
+  window.addEventListener('popstate', e => {
+    e.preventDefault();
+    goBack();
+  });
+  history.pushState(null, '', '');
+});
+</script>
+</body>
+</html>
