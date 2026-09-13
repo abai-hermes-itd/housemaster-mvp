@@ -1,0 +1,15 @@
+{
+  "name": "housemaster-development-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Development MCP v0.1 — read-only technical execution helper (NOT the HouseMaster Product MCP). See README.md.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "selftest": "node test/selfTest.js",
+    "validators": "node test/d03Validators.test.js",
+    "test": "node test/selfTest.js && node test/d03Validators.test.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

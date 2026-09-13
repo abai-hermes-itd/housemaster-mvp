@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "hm_gate_report.input",
+  "title": "hm_gate_report input",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["gateId"],
+  "properties": {
+    "gateId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Identifier of the gate this technical report is being produced for (e.g. MCP-D03). This tool never decides the gate's outcome."
+    },
+    "baselineRef": {
+      "type": "string",
+      "description": "Passed through to hm_diff_summary. Defaults to HEAD."
+    },
+    "testStatus": {
+      "type": "string",
+      "enum": ["PASS", "FAIL", "SKIPPED"],
+      "description": "Caller-supplied outcome of any external test run for this gate (this MCP does not run product tests itself). Defaults to SKIPPED."
+    },
+    "scope": {
+      "type": "object",
+      "description": "Passed through to hm_scope_check's MCP-D03 hardened contract (minus gateId, which is set automatically).",
+      "additionalProperties": true
+    }
+  }
+}

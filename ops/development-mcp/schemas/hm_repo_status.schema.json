@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "hm_repo_status.input",
+  "title": "hm_repo_status input",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}

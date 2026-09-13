@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "hm_scope_check.input",
+  "title": "hm_scope_check input",
+  "description": "Two supported shapes: legacy {paths, allowedPrefixes} from MCP-D02, or the MCP-D03 hardened contract below. additionalProperties is false, so both shapes' fields are listed explicitly.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "paths": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "LEGACY (MCP-D02): explicit list of paths to classify."
+    },
+    "allowedPrefixes": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "LEGACY (MCP-D02): directory prefixes allowed for the paths[] check."
+    },
+    "workspacePath": { "type": "string" },
+    "gateId": { "type": "string" },
+    "allowedFiles": { "type": "array", "items": { "type": "string" } },
+    "allowedDirectories": { "type": "array", "items": { "type": "string" } },
+    "forbiddenFiles": { "type": "array", "items": { "type": "string" } },
+    "forbiddenDirectories": { "type": "array", "items": { "type": "string" } },
+    "allowUntracked": { "type": "boolean" },
+    "baselineRef": { "type": "string" },
+    "simulateChangedFiles": {
+      "type": "object",
+      "description": "Test-only deterministic override of git-derived change sets.",
+      "additionalProperties": false,
+      "properties": {
+        "staged": { "type": "array", "items": { "type": "string" } },
+        "unstaged": { "type": "array", "items": { "type": "string" } },
+        "untracked": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
