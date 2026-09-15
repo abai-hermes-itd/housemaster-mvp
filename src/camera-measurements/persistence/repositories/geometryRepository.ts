@@ -10,7 +10,11 @@ import type { Geometry } from "../../domain/types/Geometry.ts";
 import type { GeometryId } from "../../domain/ids/ids.ts";
 import { db } from "../db.ts";
 import { createAppendOnlyRepository } from "../guards/appendOnlyRepository.ts";
-import { ConcurrencyConflictError, DuplicateVersionError } from "../guards/errors.ts";
+import {
+  ConcurrencyConflictError,
+  DuplicateVersionError,
+  VersionedAppendOnlyRuleViolationError,
+} from "../guards/errors.ts";
 
 const table = db.geometry;
 const base = createAppendOnlyRepository<Geometry, [GeometryId, number]>(table, "geometry");
@@ -19,19 +23,48 @@ export const geometryRepository = {
   ...base,
 
   /**
-   * Raw insert of one (geometryId, version) row. The compound primary key
-   * makes an exact duplicate impossible to insert twice; Dexie's own
-   * uniqueness constraint is translated into a named domain error here.
+   * Inserts the FIRST version (version 1) of a brand-new geometryId only
+   * — G1-05B-R2 finding R2-01: the original `create()` permitted
+   * inserting an arbitrary (geometryId, version) pair directly (e.g. a
+   * "v3" with no v1/v2 ever created), bypassing the atomic
+   * compare-and-create guard entirely. Every version after the first
+   * must go through `createNextVersion()`; this method rejects both a
+   * non-1 version and any geometryId that already has at least one row.
+   * The existence check and the insert happen inside one Dexie
+   * transaction so two concurrent `create()` calls for the same
+   * brand-new geometryId can't both slip past the existence check (the
+   * compound-key uniqueness constraint would also catch that specific
+   * case on its own, since both would target the identical
+   * `(geometryId, 1)` key, but the transaction removes the race window
+   * entirely rather than relying on that as the only backstop).
    */
   async create(record: Geometry): Promise<[GeometryId, number]> {
-    try {
-      return await table.add(record);
-    } catch (err) {
-      if (err instanceof Error && err.name === "ConstraintError") {
-        throw new DuplicateVersionError("Geometry", `${record.geometryId}@v${record.version}`);
-      }
-      throw err;
+    if (record.version !== 1) {
+      throw new VersionedAppendOnlyRuleViolationError(
+        `Geometry "${record.geometryId}": create() may only insert version 1 of a brand-new geometryId — ` +
+          `every later version must be created through createNextVersion().`,
+      );
     }
+
+    return db.transaction("rw", table, async () => {
+      const alreadyHasAVersion = await table.where("geometryId").equals(record.geometryId).count();
+      if (alreadyHasAVersion > 0) {
+        throw new VersionedAppendOnlyRuleViolationError(
+          `Geometry "${record.geometryId}" already has at least one version on record — create() only ` +
+            `accepts a brand-new geometryId; use createNextVersion() to add a subsequent version.`,
+        );
+      }
+
+      try {
+        await table.add(record);
+      } catch (err) {
+        if (err instanceof Error && err.name === "ConstraintError") {
+          throw new DuplicateVersionError("Geometry", `${record.geometryId}@v${record.version}`);
+        }
+        throw err;
+      }
+      return [record.geometryId, record.version] as [GeometryId, number];
+    });
   },
 
   async getVersion(geometryId: GeometryId, version: number): Promise<Geometry | undefined> {

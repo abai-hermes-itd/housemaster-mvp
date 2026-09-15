@@ -64,7 +64,7 @@ test("Geometry: v1 remains unchanged/readable after v2 is created", async () => 
   assert.deepEqual(v1?.coordinates, originalCoordinates);
 });
 
-test("Geometry: same geometryId with duplicate version rejected", async () => {
+test("Geometry: same geometryId with duplicate version rejected (create() rejects a geometryId that already exists)", async () => {
   const geometryId = nextId("geometry");
   const record = {
     geometryId,
@@ -74,7 +74,11 @@ test("Geometry: same geometryId with duplicate version rejected", async () => {
     createdAt: new Date().toISOString(),
   };
   await geometryRepository.create(record);
-  await assert.rejects(() => geometryRepository.create(record), DuplicateVersionError);
+  // R2-01: create() now rejects any geometryId that already has a
+  // version on record (with the more specific
+  // VersionedAppendOnlyRuleViolationError), before it would ever reach
+  // the underlying compound-key constraint DuplicateVersionError guards.
+  await assert.rejects(() => geometryRepository.create(record), VersionedAppendOnlyRuleViolationError);
 });
 
 test("Geometry: invalid predecessor version rejected (expectedCurrentVersion does not match reality)", async () => {
@@ -128,6 +132,69 @@ test("Geometry: repository update rejects, repository delete rejects", async () 
     AppendOnlyViolationError,
   );
   await assert.rejects(() => geometryRepository.delete([geometryId, 1]), AppendOnlyViolationError);
+});
+
+// --- G1-05B-R2 R2-01: create() hardening ---
+
+test("Geometry: direct create() v1 succeeds for a brand-new geometryId", async () => {
+  const geometryId = nextId("geometry");
+  const [returnedId, returnedVersion] = await geometryRepository.create({
+    geometryId,
+    version: 1,
+    primitiveType: "POINT",
+    coordinates: [[5, 5]],
+    createdAt: new Date().toISOString(),
+  });
+  assert.equal(returnedId, geometryId);
+  assert.equal(returnedVersion, 1);
+});
+
+test("Geometry: direct create() rejects a non-1 version for a brand-new geometryId", async () => {
+  const geometryId = nextId("geometry");
+  await assert.rejects(
+    () =>
+      geometryRepository.create({
+        geometryId,
+        version: 2,
+        primitiveType: "POINT",
+        coordinates: [[5, 5]],
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("Geometry: concurrent next-version attempts produce exactly one success and one rejection", async () => {
+  const geometryId = nextId("geometry");
+  await geometryRepository.createNextVersion(geometryId, 0, {
+    primitiveType: "POINT",
+    coordinates: [[0, 0]],
+    createdAt: new Date().toISOString(),
+  });
+
+  // Both racers start from the same observed current version (1) and
+  // fire without awaiting each other.
+  const results = await Promise.allSettled([
+    geometryRepository.createNextVersion(geometryId, 1, {
+      primitiveType: "POINT",
+      coordinates: [[1, 1]],
+      createdAt: new Date().toISOString(),
+    }),
+    geometryRepository.createNextVersion(geometryId, 1, {
+      primitiveType: "POINT",
+      coordinates: [[2, 2]],
+      createdAt: new Date().toISOString(),
+    }),
+  ]);
+
+  const fulfilled = results.filter((r) => r.status === "fulfilled");
+  const rejected = results.filter((r) => r.status === "rejected");
+  assert.equal(fulfilled.length, 1, "exactly one racer must succeed");
+  assert.equal(rejected.length, 1, "exactly one racer must be rejected");
+  assert.ok((rejected[0] as PromiseRejectedResult).reason instanceof ConcurrencyConflictError);
+
+  const versions = await geometryRepository.listVersions(geometryId);
+  assert.equal(versions.length, 2, "only one of the two racers actually created a row");
 });
 
 // ---------------------------------------------------------------------------
@@ -239,6 +306,54 @@ test("FormulaDefinition: repository update rejects, repository delete rejects", 
     AppendOnlyViolationError,
   );
   await assert.rejects(() => formulaDefinitionRepository.delete([record.formulaType, 1]), AppendOnlyViolationError);
+});
+
+// --- G1-05B-R2 R2-02: successor creation atomicity ---
+
+test("FormulaDefinition: two concurrent successor creates against the same predecessor — exactly one succeeds, exactly one rejects", async () => {
+  const formulaType = "RECTANGLE_AREA" as const;
+  const existing = await formulaDefinitionRepository.listVersions(formulaType);
+  const predecessorVersion = existing.length === 0 ? 1 : Math.max(...existing.map((row) => row.version)) + 1;
+  await formulaDefinitionRepository.create(makeFormulaRecord({ formulaType, version: predecessorVersion }));
+
+  // Two different candidate successor versions, both claiming the same
+  // predecessor, fired without awaiting each other.
+  const results = await Promise.allSettled([
+    formulaDefinitionRepository.create(
+      makeFormulaRecord({
+        formulaType,
+        version: predecessorVersion + 1,
+        supersedesFormulaVersion: predecessorVersion,
+      }),
+    ),
+    formulaDefinitionRepository.create(
+      makeFormulaRecord({
+        formulaType,
+        version: predecessorVersion + 2,
+        supersedesFormulaVersion: predecessorVersion,
+      }),
+    ),
+  ]);
+
+  const fulfilled = results.filter((r) => r.status === "fulfilled");
+  const rejected = results.filter((r) => r.status === "rejected");
+  assert.equal(fulfilled.length, 1, "exactly one racer must succeed");
+  assert.equal(rejected.length, 1, "exactly one racer must be rejected");
+  assert.ok((rejected[0] as PromiseRejectedResult).reason instanceof VersionedAppendOnlyRuleViolationError);
+});
+
+test("FormulaDefinition: lifecycle status remains derived correctly (ACTIVE, then DEPRECATED once superseded)", async () => {
+  const formulaType = "GROSS_MINUS_OPENINGS" as const;
+  const existing = await formulaDefinitionRepository.listVersions(formulaType);
+  const version = existing.length === 0 ? 1 : Math.max(...existing.map((row) => row.version)) + 1;
+  await formulaDefinitionRepository.create(makeFormulaRecord({ formulaType, version }));
+  assert.equal(await formulaDefinitionRepository.getLifecycleStatus(formulaType, version), "ACTIVE");
+
+  await formulaDefinitionRepository.create(
+    makeFormulaRecord({ formulaType, version: version + 1, supersedesFormulaVersion: version }),
+  );
+  assert.equal(await formulaDefinitionRepository.getLifecycleStatus(formulaType, version), "DEPRECATED");
+  assert.equal(await formulaDefinitionRepository.getLifecycleStatus(formulaType, version + 1), "ACTIVE");
 });
 
 // ---------------------------------------------------------------------------
@@ -567,6 +682,137 @@ test("DerivedMeasurement: repository update rejects, repository delete rejects",
   await assert.rejects(() => derivedMeasurementRepository.delete(derivedMeasurementId), AppendOnlyViolationError);
 });
 
+// --- G1-05B-R2 R2-03: successor creation atomicity ---
+
+test("DerivedMeasurement: a second sequential successor to the same predecessor is rejected", async () => {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = nextId("target");
+  const v1Id = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId: v1Id,
+    formulaType: formula.formulaType,
+    formulaVersion: formula.version,
+    inputMeasurementIds: [nextId("measurement")],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    targetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    calculationScope: targetId,
+    createdAt: new Date().toISOString(),
+  });
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId: nextId("derived"),
+    formulaType: formula.formulaType,
+    formulaVersion: formula.version,
+    inputMeasurementIds: [nextId("measurement")],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    supersedesDerivedMeasurementId: v1Id,
+    targetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    calculationScope: targetId,
+    createdAt: new Date().toISOString(),
+  });
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [nextId("measurement")],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: [],
+        supersedesDerivedMeasurementId: v1Id,
+        targetId,
+        outputQuantityType: "AREA",
+        semanticCategory: "RAW_AREA",
+        calculationScope: targetId,
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("DerivedMeasurement: two concurrent successor creates against the same predecessor — exactly one succeeds, exactly one rejects", async () => {
+  const formula = await makeFormulaDefinition("VOLUME");
+  const targetId = nextId("target");
+  const v1Id = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId: v1Id,
+    formulaType: formula.formulaType,
+    formulaVersion: formula.version,
+    inputMeasurementIds: [nextId("measurement")],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    targetId,
+    outputQuantityType: "VOLUME",
+    semanticCategory: "VOLUME_METRIC",
+    calculationScope: targetId,
+    createdAt: new Date().toISOString(),
+  });
+
+  const results = await Promise.allSettled([
+    derivedMeasurementRepository.create({
+      derivedMeasurementId: nextId("derived"),
+      formulaType: formula.formulaType,
+      formulaVersion: formula.version,
+      inputMeasurementIds: [nextId("measurement")],
+      inputGeometryRefs: [],
+      inputDerivedMeasurementIds: [],
+      supersedesDerivedMeasurementId: v1Id,
+      targetId,
+      outputQuantityType: "VOLUME",
+      semanticCategory: "VOLUME_METRIC",
+      calculationScope: targetId,
+      createdAt: new Date().toISOString(),
+    }),
+    derivedMeasurementRepository.create({
+      derivedMeasurementId: nextId("derived"),
+      formulaType: formula.formulaType,
+      formulaVersion: formula.version,
+      inputMeasurementIds: [nextId("measurement")],
+      inputGeometryRefs: [],
+      inputDerivedMeasurementIds: [],
+      supersedesDerivedMeasurementId: v1Id,
+      targetId,
+      outputQuantityType: "VOLUME",
+      semanticCategory: "VOLUME_METRIC",
+      calculationScope: targetId,
+      createdAt: new Date().toISOString(),
+    }),
+  ]);
+
+  const fulfilled = results.filter((r) => r.status === "fulfilled");
+  const rejected = results.filter((r) => r.status === "rejected");
+  assert.equal(fulfilled.length, 1, "exactly one racer must succeed");
+  assert.equal(rejected.length, 1, "exactly one racer must be rejected");
+  assert.ok((rejected[0] as PromiseRejectedResult).reason instanceof VersionedAppendOnlyRuleViolationError);
+});
+
+test("DerivedMeasurement: historical pinned FormulaDefinition version remains unchanged after being referenced", async () => {
+  const formula = await makeFormulaDefinition("DEFECT_AREA_TOTAL");
+  const before = await formulaDefinitionRepository.getVersion(formula.formulaType, formula.version);
+  const targetId = nextId("target");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId: nextId("derived"),
+    formulaType: formula.formulaType,
+    formulaVersion: formula.version,
+    inputMeasurementIds: [],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [nextId("derived")],
+    targetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "DEFECT_AREA_METRIC",
+    calculationScope: targetId,
+    createdAt: new Date().toISOString(),
+  });
+  const after = await formulaDefinitionRepository.getVersion(formula.formulaType, formula.version);
+  assert.deepEqual(after, before);
+});
+
 // ---------------------------------------------------------------------------
 // G1-05B-FIX — calculationScope canonical input-set encoding for aggregate
 // formulas (AGGREGATE_SUM, DEFECT_AREA_TOTAL, DEFECT_LENGTH_TOTAL).
@@ -639,6 +885,82 @@ test("canonicalizeAggregateCalculationScope: geometry refs canonicalize by geome
   assert.notEqual(sameIdDifferentVersion, differentIdSameVersion, "geometryId alone must change the canonical value");
 });
 
+// --- G1-05B-R2 R2-04: JSON canonicalization must be collision-safe ---
+
+test('canonicalizeAggregateCalculationScope: ["a,b"] and ["a","b"] are collision-safe (different canonical values)', () => {
+  const oneIdContainingAComma = canonicalizeAggregateCalculationScope("parent:X", {
+    inputMeasurementIds: ["a,b"],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+  });
+  const twoSeparateIds = canonicalizeAggregateCalculationScope("parent:X", {
+    inputMeasurementIds: ["a", "b"],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+  });
+  assert.notEqual(
+    oneIdContainingAComma,
+    twoSeparateIds,
+    "a delimiter-joined encoding would have collided here; JSON serialization must not",
+  );
+});
+
+test("canonicalizeAggregateCalculationScope: scope/ids containing '|', ',', '@v', quotes, and backslashes are safe and distinct", () => {
+  const weirdScope = 'scope|with,special@v1"chars\\here';
+  const weird = canonicalizeAggregateCalculationScope(weirdScope, {
+    inputMeasurementIds: ['id"with\\quote', "id,with|pipe@v9"],
+    inputGeometryRefs: [{ geometryId: "g@v9|weird", version: 1 }],
+    inputDerivedMeasurementIds: [],
+  });
+  const plain = canonicalizeAggregateCalculationScope("a-completely-different-plain-scope", {
+    inputMeasurementIds: ["totally-different"],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+  });
+  assert.notEqual(weird, plain);
+  // The value must remain valid, parseable JSON — human-inspectable, not
+  // corrupted or truncated by the special characters it contains.
+  const parsed = JSON.parse(weird) as { scope: string; measurements: string[] };
+  assert.equal(parsed.scope, weirdScope);
+  assert.deepEqual(parsed.measurements, ['id"with\\quote', "id,with|pipe@v9"].sort());
+});
+
+test("canonicalizeAggregateCalculationScope: duplicate-sensitive — a repeated id is preserved, not deduplicated", () => {
+  const withDuplicate = canonicalizeAggregateCalculationScope("parent:X", {
+    inputMeasurementIds: ["m1", "m1"],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+  });
+  const withoutDuplicate = canonicalizeAggregateCalculationScope("parent:X", {
+    inputMeasurementIds: ["m1"],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+  });
+  assert.notEqual(withDuplicate, withoutDuplicate, "no deduplication may be invented");
+  const parsed = JSON.parse(withDuplicate) as { measurements: string[] };
+  assert.deepEqual(parsed.measurements, ["m1", "m1"]);
+});
+
+test("canonicalizeAggregateCalculationScope: does not mutate the caller's input arrays", () => {
+  const measurementIds = ["m2", "m1"];
+  const geometryRefs = [
+    { geometryId: "g2", version: 1 },
+    { geometryId: "g1", version: 1 },
+  ];
+  const derivedIds = ["d2", "d1"];
+  canonicalizeAggregateCalculationScope("parent:X", {
+    inputMeasurementIds: measurementIds,
+    inputGeometryRefs: geometryRefs,
+    inputDerivedMeasurementIds: derivedIds,
+  });
+  assert.deepEqual(measurementIds, ["m2", "m1"]);
+  assert.deepEqual(geometryRefs, [
+    { geometryId: "g2", version: 1 },
+    { geometryId: "g1", version: 1 },
+  ]);
+  assert.deepEqual(derivedIds, ["d2", "d1"]);
+});
+
 test("DerivedMeasurement: AGGREGATE_SUM calculationScope contains the declared scope + canonical exact input set", async () => {
   const formula = await makeFormulaDefinition("AGGREGATE_SUM");
   const parentTargetId = nextId("target");
@@ -665,9 +987,10 @@ test("DerivedMeasurement: AGGREGATE_SUM calculationScope contains the declared s
     inputDerivedMeasurementIds,
   });
   assert.equal(found?.calculationScope, expected);
-  // Sanity: the canonical value visibly contains both the declared label
-  // and every pinned input id, not just a label or just a hash.
-  assert.ok(found?.calculationScope.startsWith(declaredScopeLabel));
+  // Sanity: the canonical JSON value visibly contains both the declared
+  // label and every pinned input id in cleartext — human-inspectable,
+  // not a hash-only representation.
+  assert.ok(found?.calculationScope.includes(declaredScopeLabel));
   for (const id of inputDerivedMeasurementIds) {
     assert.ok(found?.calculationScope.includes(id));
   }

@@ -93,41 +93,76 @@ export interface CanonicalScopeInputs {
 }
 
 /**
- * Builds the canonical `calculationScope` value for an aggregate formula:
- * `<declaredScopeIdentifier>|M:<sorted measurement ids>|G:<sorted "geometryId@vVersion">|D:<sorted derived ids>`.
+ * The canonical structured shape a `calculationScope` string is a
+ * `JSON.stringify()` of, for an aggregate formula. Exposed as a type only
+ * for documentation/testing — the actual persisted value is always the
+ * serialized string, never this object.
+ */
+export interface CanonicalAggregateScope {
+  readonly scope: string;
+  readonly measurements: readonly MeasurementId[];
+  readonly geometries: readonly { readonly geometryId: GeometryId; readonly version: number }[];
+  readonly derived: readonly DerivedMeasurementId[];
+}
+
+/**
+ * Builds the canonical `calculationScope` value for an aggregate formula
+ * as one `JSON.stringify()` of a fixed-shape object — G1-05B-R2 finding
+ * R2-04: a delimiter-joined string (`scope|M:a,b|G:g@v1|D:x,y`) is not
+ * formally collision-safe for arbitrary string IDs (e.g. an id itself
+ * containing "," or "|" could be indistinguishable from two separate
+ * ids). JSON serialization has no such ambiguity: string values are
+ * quoted and escaped by `JSON.stringify` itself, so an id containing any
+ * of `,`, `|`, `@v`, a quote, or a backslash can never be confused with
+ * an array/field boundary.
  *
- * - Deterministic and stable across replay: no timestamp, no randomness,
- *   no external dependency.
+ * - Deterministic and stable across replay: the returned object is
+ *   always constructed with the same four keys in the same order
+ *   (`scope`, `measurements`, `geometries`, `derived`), so
+ *   `JSON.stringify` produces byte-identical output for byte-identical
+ *   canonical content — no timestamp, no randomness, no external
+ *   dependency (`JSON.stringify` is a JS built-in).
  * - Order-independent for semantically identical input sets: each
- *   category is independently sorted before joining, so supplying the
- *   same ids in a different array order canonicalizes identically.
- * - Duplicate-sensitive: `Array.prototype.sort()` does not remove
- *   duplicates, so a repeated id still appears the same number of times
- *   in the canonical form — no deduplication is invented here, matching
- *   "duplicate-sensitive behavior must follow the existing frozen input
- *   semantics."
+ *   category is independently, deterministically sorted (measurements
+ *   and derived ids lexicographically; geometry refs by `geometryId`
+ *   then `version`) before serialization, so supplying the same ids in a
+ *   different array order canonicalizes identically.
+ * - Duplicate-sensitive: sorting never removes an element, so a repeated
+ *   id still appears the same number of times in the canonical array —
+ *   no deduplication is invented here.
  * - Geometry refs are canonicalized by their FULL composite identity
- *   (`geometryId` + `version`), so two refs sharing a `geometryId` but
- *   differing only by `version` canonicalize differently.
- * - Not a hash: a plain, human-readable, deterministic string, per the
- *   preferred shape — and even if it were a hash, the exact ids remain
- *   independently recoverable from `inputMeasurementIds` /
+ *   (`geometryId` + `version`): the sort key is `(geometryId, version)`,
+ *   so two refs sharing a `geometryId` but differing only by `version`
+ *   (or vice versa) always canonicalize differently.
+ * - Not a hash-only representation: the JSON output remains
+ *   human-inspectable (every id appears in cleartext), and the exact ids
+ *   also remain independently recoverable from `inputMeasurementIds` /
  *   `inputGeometryRefs` / `inputDerivedMeasurementIds`, which this
- *   function never removes or replaces.
- * - Assumes no id value contains this format's delimiter characters
- *   (`|`, `,`, `@v`) — true for every id in this system, which are
- *   opaque strings produced by this codebase's own id generation, never
- *   externally supplied free text.
+ *   function never removes, reorders in place, or replaces — it reads
+ *   from copies, never mutating the caller's arrays.
+ * - No external dependency: only `JSON.stringify` and `Array.prototype`
+ *   methods are used.
  */
 export function canonicalizeAggregateCalculationScope(
   declaredScopeIdentifier: string,
   inputs: CanonicalScopeInputs,
 ): string {
-  const measurementPart = [...inputs.inputMeasurementIds].sort().join(",");
-  const geometryPart = inputs.inputGeometryRefs
-    .map((ref) => `${ref.geometryId}@v${ref.version}`)
-    .sort()
-    .join(",");
-  const derivedPart = [...inputs.inputDerivedMeasurementIds].sort().join(",");
-  return `${declaredScopeIdentifier}|M:${measurementPart}|G:${geometryPart}|D:${derivedPart}`;
+  const measurements = [...inputs.inputMeasurementIds].sort();
+  const geometries = inputs.inputGeometryRefs
+    .map((ref) => ({ geometryId: ref.geometryId, version: ref.version }))
+    .sort((a, b) => {
+      if (a.geometryId !== b.geometryId) {
+        return a.geometryId < b.geometryId ? -1 : 1;
+      }
+      return a.version - b.version;
+    });
+  const derived = [...inputs.inputDerivedMeasurementIds].sort();
+
+  const canonical: CanonicalAggregateScope = {
+    scope: declaredScopeIdentifier,
+    measurements,
+    geometries,
+    derived,
+  };
+  return JSON.stringify(canonical);
 }
