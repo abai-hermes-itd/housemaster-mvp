@@ -8,8 +8,9 @@
  * entity a documented, stable identity field without adding runtime
  * casting overhead not required by the frozen architecture.
  *
- * Only entities in scope for GATE-1/G1-04 (REFERENCE_IDENTITY +
- * APPEND_ONLY_FACT) are declared here.
+ * Entities in scope for GATE-1/G1-04 (REFERENCE_IDENTITY +
+ * APPEND_ONLY_FACT) and GATE-1/G1-05B (VERSIONED_APPEND_ONLY) are
+ * declared here.
  */
 
 export type BuildingId = string;
@@ -23,17 +24,21 @@ export type DecisionId = string;
 export type CitationId = string;
 
 /**
- * Reference to a MeasurementSession (G1-05, MUTABLE_OPERATIONAL_STATE —
- * out of scope for this gate). Modeled as a plain string id so
+ * Reference to a MeasurementSession (G1-05C, MUTABLE_OPERATIONAL_STATE —
+ * out of scope for G1-05B). Modeled as a plain string id so
  * Measurement/Evidence can carry the documented relationship without
  * requiring the MeasurementSession store to exist yet.
  */
 export type SessionId = string;
 
-/**
- * Reference to a Geometry's composite (geometryId, version) identity
- * (G1-05, VERSIONED_APPEND_ONLY — out of scope for this gate). Modeled as
- * plain fields so Measurement can carry its documented "0..1 Geometry"
- * relationship without requiring the Geometry store to exist yet.
- */
+/** Half of Geometry's composite (geometryId, version) identity. */
 export type GeometryId = string;
+
+/**
+ * FormulaDefinition's own `formulaDefinitionId` field (FORMULA_AND_
+ * DERIVATION_CONTRACT.md's "Minimum Fields" list) — distinct from its
+ * actual identity/lookup key, the composite (formulaType, version).
+ */
+export type FormulaDefinitionId = string;
+
+export type DerivedMeasurementId = string;

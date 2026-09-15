@@ -6,19 +6,21 @@
  * Dexie 4's known TS2589 "excessively deep" instantiation error that a
  * zero/near-empty-table Dexie subclass can trigger.
  *
- * Only the 9 entities in G1-04's scope get typed table properties here.
- * Adding a table property for an out-of-scope entity (SurveyAssignment,
- * ScopeItem, MeasurementSession, Geometry, FormulaDefinition,
- * DerivedMeasurement, Report, ReportSnapshot) before its own gate is
- * explicitly out of scope.
+ * Only the 12 entities in G1-04 + G1-05B's scope get typed table
+ * properties here. Adding a table property for an out-of-scope entity
+ * (SurveyAssignment, ScopeItem, MeasurementSession, Report,
+ * ReportSnapshot — G1-05C) before its own gate is explicitly out of scope.
  */
-import Dexie, { type EntityTable } from "dexie";
-import type { ActorId, BuildingId, CalibrationSessionId, CitationId, DecisionId, EvidenceId, MeasurementId, ProposalId, TargetId } from "../domain/ids/ids.ts";
+import Dexie, { type EntityTable, type Table } from "dexie";
+import type { ActorId, BuildingId, CalibrationSessionId, CitationId, DecisionId, DerivedMeasurementId, EvidenceId, FormulaDefinitionId, GeometryId, MeasurementId, ProposalId, TargetId } from "../domain/ids/ids.ts";
 import type { ActorRef } from "../domain/types/ActorRef.ts";
 import type { Building } from "../domain/types/Building.ts";
 import type { CalibrationSession } from "../domain/types/CalibrationSession.ts";
 import type { Decision } from "../domain/types/Decision.ts";
+import type { DerivedMeasurement } from "../domain/types/DerivedMeasurement.ts";
 import type { Evidence } from "../domain/types/Evidence.ts";
+import type { FormulaDefinition, FormulaType } from "../domain/types/FormulaDefinition.ts";
+import type { Geometry } from "../domain/types/Geometry.ts";
 import type { KnowledgeCitation } from "../domain/types/KnowledgeCitation.ts";
 import type { Measurement } from "../domain/types/Measurement.ts";
 import type { Proposal } from "../domain/types/Proposal.ts";
@@ -38,6 +40,11 @@ export type CameraMeasurementsDatabase = Dexie & {
   proposal: EntityTable<Proposal, "proposalId">;
   decision: EntityTable<Decision, "decisionId">;
   knowledgeCitation: EntityTable<KnowledgeCitation, "citationId">;
+  // VERSIONED_APPEND_ONLY (G1-05B) — compound-key tables use plain
+  // Table<T, K>, not EntityTable (which assumes a single keyof T).
+  geometry: Table<Geometry, [GeometryId, number]>;
+  formulaDefinition: Table<FormulaDefinition, [FormulaType, number]>;
+  derivedMeasurement: EntityTable<DerivedMeasurement, "derivedMeasurementId">;
 };
 
 /** Singleton database instance for the application to import. */
@@ -52,7 +59,10 @@ export type {
   CalibrationSessionId,
   CitationId,
   DecisionId,
+  DerivedMeasurementId,
   EvidenceId,
+  FormulaDefinitionId,
+  GeometryId,
   MeasurementId,
   ProposalId,
   TargetId,
