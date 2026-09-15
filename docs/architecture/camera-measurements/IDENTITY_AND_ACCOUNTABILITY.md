@@ -1,6 +1,6 @@
 # Identity & Accountability — Camera Measurements MVP
 
-Authoritative source: GATE-0C/HG-3 and its Codex/fix pass.
+Authoritative source: GATE-0C/HG-3 and its Codex/fix pass, plus GATE-0E/HG-5-FIX (acceptingDecisionId provenance strengthening).
 
 This is **not** an IAM/SSO design and **not** a role-management system. It is the minimum stable identity contract the frozen architecture needs to guarantee that every authoritative write has a resolvable, accountable, non-recyclable actor behind it, and that an AI/Guide system can never silently cross into authoritative state.
 
@@ -65,17 +65,18 @@ Only two values. `SYSTEM`, `IMPORT_PROCESS`, `DEVICE`, and `ORGANIZATION` were e
 
 ### Accepted-Proposal Attribution
 
-When an authoritative record (a `Measurement`, `Evidence`, or any other write) is created as the direct result of an **accepted** `Proposal`, its `actorId` is always the `HUMAN_OPERATOR` who made the accepting `Decision` — **never** the `AGENT` that authored the originating `Proposal`. The AI's involvement remains fully traceable via `Decision.proposalId → Proposal.author`, a separate, permanent link — it is never represented as the resulting record's own actor. This is the concrete mechanism that keeps "AI recommendation" and "authoritative engineering fact" from being conflated even after acceptance.
+When an authoritative record (a `Measurement`, `Evidence`, or any other write) is created as the direct result of an **accepted** `Proposal`, its `actorId` is always the `HUMAN_OPERATOR` who made the accepting `Decision` — **never** the `AGENT` that authored the originating `Proposal`. That record additionally carries an **`acceptingDecisionId`** (nullable; set once, at creation, populated only when the record originated from an accepted `Proposal`) — a direct, immutable pointer from the result to the specific `Decision` that authorized it, rather than something inferred circumstantially from matching actors. The AI's involvement remains fully traceable via `acceptingDecisionId → Decision.proposalId → Proposal.author`, a permanent chain — it is never represented as the resulting record's own actor. This is the concrete mechanism that keeps "AI recommendation" and "authoritative engineering fact" from being conflated even after acceptance.
 
 ### Provenance chain
 
 ```
 Proposal (author: HUMAN_OPERATOR or AGENT, immutable)
-  → Decision (actor: HUMAN_OPERATOR only, immutable, links to Proposal)
-    → resulting authoritative record (actor: the accepting HUMAN_OPERATOR)
+  → Decision (actor: HUMAN_OPERATOR only, immutable, links to Proposal via proposalId)
+    → resulting authoritative record (actor: the accepting HUMAN_OPERATOR;
+       acceptingDecisionId → this Decision, set once at creation)
 ```
 
-Every link in this chain is append-only and immutable — `result → Decision → Proposal` provenance can be traced forever, and none of the three records is ever edited after creation.
+Every link in this chain is append-only and immutable — `result → acceptingDecisionId → Decision → proposalId → Proposal → author` provenance can be traced forever, and none of the records along it is ever edited after creation.
 
 ## Execution Provenance vs. Actor Identity
 

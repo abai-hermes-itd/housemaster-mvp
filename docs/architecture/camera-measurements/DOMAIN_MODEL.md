@@ -1,6 +1,6 @@
 # Domain Model — Camera Measurements MVP
 
-Authoritative source: Math/Topology v0.2 MVP freeze, GATE-0A/HG-1, GATE-0B/HG-2, GATE-0D/HG-4 (and their Codex/fix passes).
+Authoritative source: Math/Topology v0.2 MVP freeze, GATE-0A/HG-1, GATE-0B/HG-2, GATE-0D/HG-4 (and their Codex/fix passes), and GATE-0E/HG-5-FIX (calibration validity boundary, SpatialTarget split/merge lineage, same-building replacement, Geometry concurrency, accepted-Proposal provenance).
 
 This document describes the **frozen entity set only** — no new entity may be introduced here, and none of the 16 core entities plus `ActorRef` may be removed. It describes purpose, identifiers, and relationships; it deliberately contains no SQL, schema, or storage-implementation detail — that is out of scope for architecture documentation and out of scope for this gate.
 
@@ -24,12 +24,12 @@ ActorRef (supporting identity/reference model, used by nearly every entity above
 
 ## SpatialTarget
 
-**Purpose**: the stable, physical-object identity for anything measured — a room, facade, roof, attic, stair area, opening, apartment unit, or defect. This is the entity that makes physical identity survive repeat surveys, distinct from any workflow record that happens to reference it.
+**Purpose**: the stable, physical-object identity for anything measured — a room, facade, roof, attic, stair area, opening, apartment unit, or defect. This is the entity that makes physical identity survive repeat surveys, distinct from any workflow record that happens to reference it. It is the **addressable measurement subject/context** for the MVP — not a canonical, future asset-ontology entity; no housing-stock ontology is modeled here (see `targetType` below).
 **Primary identifier**: `targetId` — stable, non-recycled, **immutable from creation, forever**.
 **`targetType`** (immutable from creation): `ROOM`, `BASEMENT_TECH`, `FACADE`, `ROOF`, `ATTIC`, `STAIR_AREA`, `OPENING`, `APARTMENT_UNIT`, `DEFECT_AREA`, `DEFECT_LINEAR` — a flat, closed enum; no housing-stock ontology (`SpatialUnit`/`Surface`/`System`/`Component`/`Asset`/`LinearElement`) is modeled.
 **`aggregationRole`** (derived from `targetType`, never stored, never overridable): `ADDITIVE_SPATIAL`, `SUBTRACTIVE_FEATURE`, `NON_AGGREGATING`.
 **Containment**: `parentTargetId` — optional or required depending on `targetType` (see the HG-1 per-type table); the resulting containment graph is **acyclic**, depth-bounded to 3 levels, and never mutates in place — a wrong-parent case requires retire + create-new + lineage.
-**Lineage (authoritative direction)**: `replacesTargetIds[]` is written **only on the new `SpatialTarget`**, once, at its own creation. `supersededByTargetIds` is **never a written field** — it exists only as a derived query view over other targets' `replacesTargetIds`.
+**Lineage (authoritative direction)**: `replacesTargetIds[]` is written **only on the new `SpatialTarget`**, once, at its own creation, and may hold more than one entry — **split** (one target replaced by several new targets) and **merge** (several targets replaced by one new target) are both supported. The resulting lineage graph is **acyclic**, but — unlike Measurement/DerivedMeasurement/FormulaDefinition/CalibrationSession lineage — it is **not restricted to one successor**; it is a graph, not a linear chain. Every entry must reference a **different** target within the **same `buildingId`** as the new target — a self-referencing entry or a cross-building entry is **rejected at write time**. `supersededByTargetIds` is **never a written field** — it exists only as a derived query view over other targets' `replacesTargetIds`. Once written, `replacesTargetIds[]` is never edited.
 **Lifecycle**: `status` ∈ `{ACTIVE, RETIRED}` — a one-way, **terminal** transition (no reactivation in MVP). Retirement writes only `status`, `retiredAt`, `retiredReason`, `retiredActor` — nothing else.
 **Historical references**: a retired target's existing `Measurement`/`Geometry`/`DerivedMeasurement` links remain valid forever; only *new* work is blocked from targeting a retired `SpatialTarget`.
 
@@ -59,14 +59,15 @@ ActorRef (supporting identity/reference model, used by nearly every entity above
 
 **Purpose**: the data anchor that must exist before any `CAMERA_OBSERVED` measurement can be considered trustworthy.
 **Primary identifier**: `calibrationSessionId`.
-**Minimum fields**: `deviceRef`, `calibratedAt`, `referenceMethod`, `actorId`.
-**Supersession**: a new `CalibrationSession` may carry `supersedesCalibrationSessionId` (set once, on the new row only) — the predecessor is never touched. `VALID`/`EXPIRED`/`SUPERSEDED` are fully **derived**, never stored.
+**Minimum fields**: `deviceRef`, `calibratedAt`, `referenceMethod`, `actorId`, `validUntilAt`.
+**Historical validity is frozen at creation**: `validUntilAt` is computed once, at creation, from whatever validity-window policy was in effect at that moment, and is never recalculated. A later change to validity-window policy applies only to calibrations created after that change — it can never reinterpret an already-created `CalibrationSession`'s pinned boundary or outcome.
+**Supersession**: a new `CalibrationSession` may carry `supersedesCalibrationSessionId` (set once, on the new row only) — the predecessor is never touched. `EXPIRED` is derived by comparing the current time against the row's own frozen `validUntilAt` (the boundary never moves, only "now" does); `VALID` is the negation; `SUPERSEDED` is derived from the existence of a successor pointing at it. None of the three is stored.
 
 ## Measurement
 
 **Purpose**: a raw captured or entered value — the single most protected entity in the model.
 **Primary identifier**: `measurementId`.
-**Relationships**: `sessionId` (parent), `targetId` (implicit via session), `0..1 Geometry` (some measurements are scalar-only), `0..1 correctsMeasurementId` (self-referential correction chain), `0..1 calibrationSessionId` (required iff camera-observed), `actorId`.
+**Relationships**: `sessionId` (parent), `targetId` (implicit via session), `0..1 Geometry` (some measurements are scalar-only), `0..1 correctsMeasurementId` (self-referential correction chain), `0..1 calibrationSessionId` (required iff camera-observed), `actorId`, `0..1 acceptingDecisionId` (set once, only if this Measurement resulted from an accepted `Proposal` — see `IDENTITY_AND_ACCOUNTABILITY.md`).
 **`entryMethod`**: `MANUAL_ENTERED`, `CAMERA_OBSERVED`, `SYSTEM_ASSUMED`, `IMPORTED_HISTORIC` (correction is a relationship, not a 5th entry method).
 **Companion fields by entry method**: `sourceRef` (required if `IMPORTED_HISTORIC`), `assumptionReason` (required if `SYSTEM_ASSUMED`).
 **Immutability**: every field is set once at creation; there is **no mutable field on `Measurement` at all**. A correction is always a brand-new row.
@@ -78,6 +79,7 @@ ActorRef (supporting identity/reference model, used by nearly every entity above
 **Primitives**: `POINT`, `POLYLINE`, `POLYGON` only — no `Plane`, `Boundary`, `Surface`, or `DefectGeometry` as separate primitive types.
 **Rule**: one `Polygon` = one plane, always; a multi-plane facade/roof is modeled as multiple `SpatialTarget`s combined via `AGGREGATE_SUM`, never as one non-planar polygon.
 **Immutability**: each `(geometryId, version)` row is fully immutable; a correction creates a **new row under the same `geometryId`** with `version + 1`. `DerivedMeasurement` and `ReportSnapshot` always pin the exact composite identity.
+**Concurrency**: `(geometryId, version)` is enforced **unique** — no two rows may ever share the same pair. Creating the next version is an **atomic compare-and-create** operation, guarded against the currently-observed version (an optimistic-concurrency check): two concurrent attempts to create "the next version" for the same `geometryId` can never both succeed — exactly one wins, and the loser must retry against a freshly-read current version. Historical replay always resolves the exact pinned composite identity, never a re-computed "latest."
 
 ## FormulaDefinition
 
@@ -102,6 +104,7 @@ Full catalogue and rules: `FORMULA_AND_DERIVATION_CONTRACT.md`.
 **Primary identifier**: `evidenceId`.
 **Immutability**: immutable from creation, no exception; no correction/supersession chain — a replacement is simply a new, independently-referenced `Evidence` row.
 **Storage**: `storageRef` is a pointer into object storage, never an inline blob; `sourceType` is restricted to physical-capture provenance and can never be a Knowledge/RAG object.
+**Provenance**: `0..1 acceptingDecisionId` (set once, only if this Evidence resulted from an accepted `Proposal`).
 
 ## Report
 

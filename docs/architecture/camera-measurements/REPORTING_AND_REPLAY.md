@@ -1,6 +1,6 @@
 # Reporting & Historical Replay — Camera Measurements MVP
 
-Authoritative source: R3A/R3B report-reproducibility findings, GATE-0D/HG-4 and its Codex/fix pass (CDX4-05, CDX4-09).
+Authoritative source: R3A/R3B report-reproducibility findings, GATE-0D/HG-4 and its Codex/fix pass (CDX4-05, CDX4-09), and GATE-0E/HG-5-FIX (cadastral/map pinning rule, withdrawal same-Report ownership).
 
 ## Report vs. ReportSnapshot
 
@@ -26,7 +26,7 @@ Authoritative source: R3A/R3B report-reproducibility findings, GATE-0D/HG-4 and 
 | `buildingId` | The stable domain identity of the building surveyed |
 | `buildingNameAtIssuance`, `buildingAddressAtIssuance` | The building's identifying details as they were at issuance — protects against a later address/name correction silently altering an issued report's presented content, exactly the same reasoning as the actor-name pin |
 
-**When available** (not a required MVP field, and not currently part of the frozen entity set): a cadastral or map-feature reference, and the provenance/status of any pinned item exactly as known at issuance. **`buildingId` remains the stable domain identity in all cases — an external cadastral/map reference is never promoted above it.** No `cadastralRef`/`mapFeatureId` field exists anywhere in this architecture today; nothing here requires adding one, and none should be added without a proven MVP need and a new review gate.
+**Cadastral / map references.** No `cadastralRef`/`mapFeatureId` field is part of the frozen MVP entity set today, and this document does not introduce one. **The rule that applies whenever such a reference exists at issuance time** — now, or in a future, separately-frozen extension of the domain model — is unconditional: `ReportSnapshot` must pin the **exact reference(s)**, their **provenance** (where the reference came from), and their **status as known at issuance**, with exactly the same rigor as every other pinned fact in this table. This is a statement of the pinning rule such references would be subject to, not a claim that they are structurally forbidden or irrelevant to reporting. **`buildingId` remains the authoritative HouseMaster domain identity in every case** — a cadastral/map reference is supplementary, presentational context, and is never promoted above it.
 
 Everything **not** in this list — locale, number formatting, decimal separators, template/layout choice, the rendering application's version — is explicitly **pixel-identical document reproducibility**, not **data reproducibility**, and is out of MVP scope. `ReportSnapshot`'s guarantee is that the underlying facts and figures never change; it does not guarantee a byte-identical rendered PDF across template revisions.
 
@@ -40,6 +40,7 @@ Report.withdrawalRecords[]   — append-only, never edited or removed
 ```
 
 Rules:
+- **Same-Report ownership.** Every `snapshotId` in `Report.withdrawalRecords[]` must refer to a `ReportSnapshot` that was issued **by this same `Report`** — a withdrawal record naming a snapshot belonging to a different `Report` is rejected at write time.
 - **Appended only.** A withdrawal record is never edited or deleted once written.
 - **Never mutates `ReportSnapshot`.** The withdrawn snapshot's own content is completely untouched.
 - **Never deletes the historical snapshot.** A withdrawn `ReportSnapshot` remains fully, permanently resolvable by its own ID — withdrawal is a statement about current reliance, not an erasure.
