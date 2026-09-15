@@ -12,9 +12,10 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "rootDir": "src",
     "baseUrl": "."
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "ops", "docs"]
+  "exclude": ["node_modules", "ops", "docs", "src/camera-measurements/tests"]
 }

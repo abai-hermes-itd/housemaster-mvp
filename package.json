@@ -6,12 +6,13 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsc --noEmit"
+    "test": "node --experimental-strip-types --import ./src/camera-measurements/tests/setup.ts --test src/camera-measurements/tests/referenceIdentity.test.ts src/camera-measurements/tests/appendOnlyFacts.test.ts"
   },
   "dependencies": {
     "dexie": "^4.0.10"
   },
   "devDependencies": {
+    "fake-indexeddb": "^6.2.5",
     "typescript": "^5.6.3"
   }
 }

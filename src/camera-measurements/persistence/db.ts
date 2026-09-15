@@ -1,32 +1,59 @@
 /**
- * Camera Measurements — Dexie database shell (G1-03 scaffold).
+ * Camera Measurements — Dexie database instance.
  *
- * PLACEHOLDER ONLY. No domain entities or object stores are defined
- * here. This exists solely so later G1 moves have a single, typed
- * Dexie database instance to attach real stores/repositories to,
- * without redesigning anything already frozen in
- * docs/architecture/camera-measurements/.
+ * Built via direct instantiation plus a typed intersection (Dexie's
+ * documented v4 pattern), rather than class subclassing, to avoid
+ * Dexie 4's known TS2589 "excessively deep" instantiation error that a
+ * zero/near-empty-table Dexie subclass can trigger.
+ *
+ * Only the 9 entities in G1-04's scope get typed table properties here.
+ * Adding a table property for an out-of-scope entity (SurveyAssignment,
+ * ScopeItem, MeasurementSession, Geometry, FormulaDefinition,
+ * DerivedMeasurement, Report, ReportSnapshot) before its own gate is
+ * explicitly out of scope.
  */
-import Dexie from "dexie";
-import { applySchema } from "./schema";
+import Dexie, { type EntityTable } from "dexie";
+import type { ActorId, BuildingId, CalibrationSessionId, CitationId, DecisionId, EvidenceId, MeasurementId, ProposalId, TargetId } from "../domain/ids/ids.ts";
+import type { ActorRef } from "../domain/types/ActorRef.ts";
+import type { Building } from "../domain/types/Building.ts";
+import type { CalibrationSession } from "../domain/types/CalibrationSession.ts";
+import type { Decision } from "../domain/types/Decision.ts";
+import type { Evidence } from "../domain/types/Evidence.ts";
+import type { KnowledgeCitation } from "../domain/types/KnowledgeCitation.ts";
+import type { Measurement } from "../domain/types/Measurement.ts";
+import type { Proposal } from "../domain/types/Proposal.ts";
+import type { SpatialTarget } from "../domain/types/SpatialTarget.ts";
+import { applySchema } from "./schema.ts";
 
 /** IndexedDB database name for the Camera Measurements feature. */
 export const DATABASE_NAME = "housemaster-camera-measurements";
 
-/**
- * The Camera Measurements Dexie database instance.
- *
- * Built via direct instantiation (Dexie's documented v4 pattern for a
- * database with no typed tables yet) rather than class subclassing,
- * to avoid Dexie 4's known TS2589 "excessively deep" instantiation
- * error when a Dexie subclass declares zero table properties.
- *
- * Intentionally has no typed table properties yet — those are added
- * only once the corresponding entity's persistence classification
- * (APPEND_ONLY_FACT / VERSIONED_APPEND_ONLY / MUTABLE_OPERATIONAL_STATE /
- * IMMUTABLE_SNAPSHOT / REFERENCE_IDENTITY) is implemented in a later,
- * explicitly opened G1 move.
- */
-export const db: Dexie = new Dexie(DATABASE_NAME);
+export type CameraMeasurementsDatabase = Dexie & {
+  building: EntityTable<Building, "buildingId">;
+  spatialTarget: EntityTable<SpatialTarget, "targetId">;
+  actorRef: EntityTable<ActorRef, "actorId">;
+  calibrationSession: EntityTable<CalibrationSession, "calibrationSessionId">;
+  measurement: EntityTable<Measurement, "measurementId">;
+  evidence: EntityTable<Evidence, "evidenceId">;
+  proposal: EntityTable<Proposal, "proposalId">;
+  decision: EntityTable<Decision, "decisionId">;
+  knowledgeCitation: EntityTable<KnowledgeCitation, "citationId">;
+};
+
+/** Singleton database instance for the application to import. */
+export const db = new Dexie(DATABASE_NAME) as CameraMeasurementsDatabase;
 
 applySchema(db);
+
+// Re-exported for repositories/tests that only need the id types alongside `db`.
+export type {
+  ActorId,
+  BuildingId,
+  CalibrationSessionId,
+  CitationId,
+  DecisionId,
+  EvidenceId,
+  MeasurementId,
+  ProposalId,
+  TargetId,
+};
