@@ -39,6 +39,25 @@ export class ActorTypeViolationError extends Error {
   }
 }
 
+/**
+ * Thrown when an actor is a valid, correctly-typed candidate but is
+ * currently INACTIVE — IDENTITY_AND_ACCOUNTABILITY.md's `status` lifecycle
+ * flag "restricts *future* assignment" only. A dedicated error type (not
+ * ActorTypeViolationError) so a caller/test can tell "wrong kind of actor"
+ * apart from "right kind of actor, just not currently eligible" — the two
+ * are different frozen rules with different remedies.
+ */
+export class ActorInactiveError extends Error {
+  constructor(actorId: string) {
+    super(
+      `Actor "${actorId}" is INACTIVE and cannot be used for a new accountable action — ` +
+        `see IDENTITY_AND_ACCOUNTABILITY.md §ActorRef ("status" restricts future assignment only; ` +
+        `it never invalidates past references).`,
+    );
+    this.name = "ActorInactiveError";
+  }
+}
+
 /** Thrown when a mutation attempts to leave a REFERENCE_IDENTITY row in a forbidden state. */
 export class ReferenceIdentityRuleViolationError extends Error {
   constructor(message: string) {

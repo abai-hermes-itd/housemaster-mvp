@@ -7,7 +7,12 @@ import { evidenceRepository } from "../persistence/repositories/evidenceReposito
 import { proposalRepository } from "../persistence/repositories/proposalRepository.ts";
 import { decisionRepository } from "../persistence/repositories/decisionRepository.ts";
 import { knowledgeCitationRepository } from "../persistence/repositories/knowledgeCitationRepository.ts";
-import { AppendOnlyViolationError, ActorTypeViolationError, ReferenceIdentityRuleViolationError } from "../persistence/guards/errors.ts";
+import {
+  AppendOnlyViolationError,
+  ActorTypeViolationError,
+  ActorInactiveError,
+  ReferenceIdentityRuleViolationError,
+} from "../persistence/guards/errors.ts";
 import { db } from "../persistence/db.ts";
 import { nextId } from "./testIds.ts";
 
@@ -20,6 +25,13 @@ async function makeHuman(): Promise<string> {
 async function makeAgent(): Promise<string> {
   const actorId = nextId("actor");
   await actorRefRepository.create({ actorId, actorType: "AGENT", displayName: "Guide", status: "ACTIVE" });
+  return actorId;
+}
+
+/** G1-04-NF1 helper: an actor of the given type, created directly INACTIVE. */
+async function makeInactive(actorType: "HUMAN_OPERATOR" | "AGENT"): Promise<string> {
+  const actorId = nextId("actor");
+  await actorRefRepository.create({ actorId, actorType, displayName: "Inactive", status: "INACTIVE" });
   return actorId;
 }
 
@@ -514,4 +526,198 @@ test("append-only guard rejects mutation at RUNTIME, not only at TypeScript comp
   // untouched value — the guard didn't just throw while silently mutating.
   const raw = await db.measurement.get(measurementId);
   assert.equal(raw?.value, 1);
+});
+
+// ---------------------------------------------------------------------------
+// G1-04-NF1 — Actor status enforcement
+//
+// assertActorType() must also reject a correctly-typed actor that is
+// currently INACTIVE. INACTIVE blocks only NEW accountable actions; it
+// must never rewrite or invalidate anything already created while the
+// actor was ACTIVE, and the ACTIVE<->INACTIVE transition itself remains
+// bidirectional.
+// ---------------------------------------------------------------------------
+
+test("CalibrationSession.create rejects an INACTIVE HUMAN_OPERATOR", async () => {
+  const actorId = await makeInactive("HUMAN_OPERATOR");
+  await assert.rejects(
+    () =>
+      calibrationSessionRepository.create({
+        calibrationSessionId: nextId("calibration"),
+        deviceRef: "device-1",
+        calibratedAt: new Date().toISOString(),
+        referenceMethod: "checkerboard",
+        actorId,
+        validUntilAt: new Date(Date.now() + 86_400_000).toISOString(),
+      }),
+    ActorInactiveError,
+  );
+});
+
+test("Measurement.create rejects an INACTIVE HUMAN_OPERATOR", async () => {
+  const actorId = await makeInactive("HUMAN_OPERATOR");
+  await assert.rejects(
+    () =>
+      measurementRepository.create({
+        measurementId: nextId("measurement"),
+        sessionId: nextId("session"),
+        actorId,
+        entryMethod: "MANUAL_ENTERED",
+        value: 1,
+        unit: "m",
+        measurementType: "LENGTH",
+        createdAt: new Date().toISOString(),
+      }),
+    ActorInactiveError,
+  );
+});
+
+test("Evidence.create rejects an INACTIVE HUMAN_OPERATOR", async () => {
+  const actorId = await makeInactive("HUMAN_OPERATOR");
+  await assert.rejects(
+    () =>
+      evidenceRepository.create({
+        evidenceId: nextId("evidence"),
+        sessionId: nextId("session"),
+        storageRef: "obj://bucket/x.jpg",
+        sourceType: "PHOTO",
+        integrityValue: "sha256:x",
+        actorId,
+        createdAt: new Date().toISOString(),
+      }),
+    ActorInactiveError,
+  );
+});
+
+test("Decision.create rejects an INACTIVE HUMAN_OPERATOR", async () => {
+  const authorId = await makeHuman();
+  const proposalId = nextId("proposal");
+  await proposalRepository.create({ proposalId, authorActorId: authorId, createdAt: new Date().toISOString() });
+  const actorId = await makeInactive("HUMAN_OPERATOR");
+
+  await assert.rejects(
+    () =>
+      decisionRepository.create({
+        decisionId: nextId("decision"),
+        proposalId,
+        actorId,
+        outcome: "ACCEPTED",
+        createdAt: new Date().toISOString(),
+      }),
+    ActorInactiveError,
+  );
+});
+
+test("Proposal.create rejects an INACTIVE HUMAN_OPERATOR author", async () => {
+  const authorId = await makeInactive("HUMAN_OPERATOR");
+  await assert.rejects(
+    () =>
+      proposalRepository.create({
+        proposalId: nextId("proposal"),
+        authorActorId: authorId,
+        createdAt: new Date().toISOString(),
+      }),
+    ActorInactiveError,
+  );
+});
+
+test("Proposal.create rejects an INACTIVE AGENT author", async () => {
+  const authorId = await makeInactive("AGENT");
+  await assert.rejects(
+    () =>
+      proposalRepository.create({
+        proposalId: nextId("proposal"),
+        authorActorId: authorId,
+        createdAt: new Date().toISOString(),
+      }),
+    ActorInactiveError,
+  );
+});
+
+test("Measurement.create still succeeds for an ACTIVE HUMAN_OPERATOR (no regression)", async () => {
+  const actorId = await makeHuman();
+  const measurementId = nextId("measurement");
+  await measurementRepository.create({
+    measurementId,
+    sessionId: nextId("session"),
+    actorId,
+    entryMethod: "MANUAL_ENTERED",
+    value: 2,
+    unit: "m",
+    measurementType: "LENGTH",
+    createdAt: new Date().toISOString(),
+  });
+  const found = await measurementRepository.getById(measurementId);
+  assert.equal(found?.value, 2);
+});
+
+test("Proposal.create still succeeds for an ACTIVE AGENT author (no regression)", async () => {
+  const authorId = await makeAgent();
+  const proposalId = nextId("proposal");
+  await proposalRepository.create({ proposalId, authorActorId: authorId, createdAt: new Date().toISOString() });
+  const found = await proposalRepository.getById(proposalId);
+  assert.equal(found?.authorActorId, authorId);
+});
+
+test("a Measurement created while its actor was ACTIVE remains readable after that actor becomes INACTIVE", async () => {
+  const actorId = await makeHuman();
+  const measurementId = nextId("measurement");
+  await measurementRepository.create({
+    measurementId,
+    sessionId: nextId("session"),
+    actorId,
+    entryMethod: "MANUAL_ENTERED",
+    value: 5,
+    unit: "m",
+    measurementType: "LENGTH",
+    createdAt: new Date().toISOString(),
+  });
+
+  await actorRefRepository.setStatus(actorId, "INACTIVE");
+
+  const stillReadable = await measurementRepository.getById(measurementId);
+  assert.equal(stillReadable?.value, 5);
+  assert.equal(stillReadable?.actorId, actorId, "the historical record's own actorId is untouched, never rewritten");
+});
+
+test("ActorRef status transition remains bidirectional: INACTIVE -> ACTIVE restores eligibility for new actions", async () => {
+  const actorId = await makeHuman();
+  await actorRefRepository.setStatus(actorId, "INACTIVE");
+
+  await assert.rejects(
+    () =>
+      measurementRepository.create({
+        measurementId: nextId("measurement"),
+        sessionId: nextId("session"),
+        actorId,
+        entryMethod: "MANUAL_ENTERED",
+        value: 1,
+        unit: "m",
+        measurementType: "LENGTH",
+        createdAt: new Date().toISOString(),
+      }),
+    ActorInactiveError,
+  );
+
+  await actorRefRepository.setStatus(actorId, "ACTIVE");
+  const reactivated = await actorRefRepository.getById(actorId);
+  assert.equal(reactivated?.status, "ACTIVE");
+
+  const measurementId = nextId("measurement");
+  await measurementRepository.create({
+    measurementId,
+    sessionId: nextId("session"),
+    actorId,
+    entryMethod: "MANUAL_ENTERED",
+    value: 7,
+    unit: "m",
+    measurementType: "LENGTH",
+    createdAt: new Date().toISOString(),
+  });
+  const found = await measurementRepository.getById(measurementId);
+  assert.equal(
+    found?.value,
+    7,
+    "reactivation (same actorId, no new ActorRef minted) restores eligibility for new work",
+  );
 });
