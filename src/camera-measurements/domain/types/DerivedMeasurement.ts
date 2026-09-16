@@ -22,8 +22,22 @@ export interface DerivedMeasurement {
   readonly inputMeasurementIds: readonly MeasurementId[];
   /** Pinned exact input IDs — Geometry (geometryId, version) composites consumed by the formula. */
   readonly inputGeometryRefs: readonly GeometryInputRef[];
-  /** Pinned exact input IDs — other DerivedMeasurement rows consumed (e.g. AGGREGATE_SUM sources). */
+  /**
+   * Pinned exact input IDs — other DerivedMeasurement rows consumed (e.g.
+   * AGGREGATE_SUM sources). For `GROSS_MINUS_OPENINGS` specifically, this
+   * holds the opening sources only — the host is `grossSourceDerivedMeasurementId`
+   * below, a structurally distinct slot (FORMULA_AND_DERIVATION_CONTRACT.md
+   * §"GROSS_MINUS_OPENINGS — host/openings structural split").
+   */
   readonly inputDerivedMeasurementIds: readonly DerivedMeasurementId[];
+  /**
+   * Pins the exact single gross-area host source. Required when
+   * `formulaType === "GROSS_MINUS_OPENINGS"`; forbidden (absent) for every
+   * other formulaType. Set once at creation, immutable, resolved by exact
+   * id only — never re-resolved to "current," identical discipline to
+   * every other pinned reference on this entity.
+   */
+  readonly grossSourceDerivedMeasurementId?: DerivedMeasurementId;
   /**
    * Set once at creation, self-referential, linear + acyclic. Permitted
    * only within an identical semanticResultKey (the four fields below).

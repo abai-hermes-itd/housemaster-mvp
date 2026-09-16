@@ -50,10 +50,12 @@ export const derivedMeasurementRepository = {
    *      duplicate source targetId ("Dedup & Overlap Rules").
    *   3. Mandatory overlap acknowledgement for 2+ spatially-relevant
    *      inputs on GROSS_MINUS_OPENINGS/AGGREGATE_SUM/DEFECT_AREA_TOTAL.
-   * GROSS_MINUS_OPENINGS's own host/openings split is NOT validated here
-   * (the current record shape has no field distinguishing the host input
-   * from the openings list) — a known, explicitly-flagged remaining gap,
-   * not silently bypassed.
+   *
+   * G1-05B-GMO-IMP-01: GROSS_MINUS_OPENINGS's host/openings structural
+   * split (`grossSourceDerivedMeasurementId` vs. `inputDerivedMeasurementIds`)
+   * is now validated — see the dedicated block below and
+   * FORMULA_AND_DERIVATION_CONTRACT.md §"GROSS_MINUS_OPENINGS —
+   * host/openings structural split".
    */
   async create(record: DerivedMeasurement): Promise<DerivedMeasurementId> {
     return db.transaction("rw", table, db.formulaDefinition, db.spatialTarget, db.geometry, async () => {
@@ -68,6 +70,21 @@ export const derivedMeasurementRepository = {
       }
 
       const isAggregateFormula = AGGREGATE_FORMULA_TYPES.includes(record.formulaType);
+      const isGrossMinusOpenings = record.formulaType === "GROSS_MINUS_OPENINGS";
+
+      // --- grossSourceDerivedMeasurementId: required iff GROSS_MINUS_OPENINGS, forbidden otherwise ---
+      if (isGrossMinusOpenings && record.grossSourceDerivedMeasurementId === undefined) {
+        throw new VersionedAppendOnlyRuleViolationError(
+          `DerivedMeasurement "${record.derivedMeasurementId}": formulaType "GROSS_MINUS_OPENINGS" requires ` +
+            `grossSourceDerivedMeasurementId.`,
+        );
+      }
+      if (!isGrossMinusOpenings && record.grossSourceDerivedMeasurementId !== undefined) {
+        throw new VersionedAppendOnlyRuleViolationError(
+          `DerivedMeasurement "${record.derivedMeasurementId}": grossSourceDerivedMeasurementId is only valid ` +
+            `for formulaType "GROSS_MINUS_OPENINGS", not "${record.formulaType}".`,
+        );
+      }
 
       // --- Applicability, part 1: formulaType -> allowedTargetTypes ---
       // For single-subject formulas (RECTANGLE_AREA, POLYGON_AREA, VOLUME,
@@ -186,9 +203,113 @@ export const derivedMeasurementRepository = {
         }
       }
 
+      // --- GROSS_MINUS_OPENINGS host/openings structural validation
+      // (FORMULA_AND_DERIVATION_CONTRACT.md §"GROSS_MINUS_OPENINGS —
+      // host/openings structural split"). record.targetId's own
+      // applicability (FACADE/ROOF) was already checked above via the
+      // non-aggregate branch, since GROSS_MINUS_OPENINGS is not in
+      // AGGREGATE_FORMULA_TYPES. ---
+      if (isGrossMinusOpenings) {
+        const grossSourceId = record.grossSourceDerivedMeasurementId;
+        if (grossSourceId === undefined) {
+          // Unreachable — guarded above — but keeps this block self-contained for TS narrowing.
+          throw new VersionedAppendOnlyRuleViolationError(
+            `DerivedMeasurement "${record.derivedMeasurementId}": grossSourceDerivedMeasurementId is required.`,
+          );
+        }
+        if (grossSourceId === record.derivedMeasurementId) {
+          throw new VersionedAppendOnlyRuleViolationError(
+            `DerivedMeasurement "${record.derivedMeasurementId}": grossSourceDerivedMeasurementId cannot equal ` +
+              `its own id (self-predecessor/cycle).`,
+          );
+        }
+
+        const grossSource = await table.get(grossSourceId);
+        if (!grossSource) {
+          throw new VersionedAppendOnlyRuleViolationError(
+            `DerivedMeasurement "${record.derivedMeasurementId}": grossSourceDerivedMeasurementId ` +
+              `"${grossSourceId}" does not exist.`,
+          );
+        }
+        if (grossSource.targetId !== record.targetId) {
+          throw new VersionedAppendOnlyRuleViolationError(
+            `DerivedMeasurement "${record.derivedMeasurementId}": grossSourceDerivedMeasurementId ` +
+              `"${grossSourceId}"'s targetId "${grossSource.targetId}" does not match this record's targetId ` +
+              `"${record.targetId}".`,
+          );
+        }
+        if (grossSource.outputQuantityType !== "AREA" || grossSource.semanticCategory !== "RAW_AREA") {
+          throw new VersionedAppendOnlyRuleViolationError(
+            `DerivedMeasurement "${record.derivedMeasurementId}": grossSourceDerivedMeasurementId ` +
+              `"${grossSourceId}" must be a gross-area result (outputQuantityType "AREA", semanticCategory ` +
+              `"RAW_AREA"), but has outputQuantityType "${grossSource.outputQuantityType}"/semanticCategory ` +
+              `"${grossSource.semanticCategory}".`,
+          );
+        }
+        if (record.inputDerivedMeasurementIds.includes(grossSourceId)) {
+          throw new VersionedAppendOnlyRuleViolationError(
+            `DerivedMeasurement "${record.derivedMeasurementId}": grossSourceDerivedMeasurementId ` +
+              `"${grossSourceId}" must not also appear in inputDerivedMeasurementIds (the openings list).`,
+          );
+        }
+
+        if (record.inputDerivedMeasurementIds.length === 0) {
+          throw new VersionedAppendOnlyRuleViolationError(
+            `DerivedMeasurement "${record.derivedMeasurementId}": formulaType "GROSS_MINUS_OPENINGS" requires ` +
+              `at least one opening source in inputDerivedMeasurementIds.`,
+          );
+        }
+        const seenOpeningTargetIds = new Set<string>();
+        for (const openingId of record.inputDerivedMeasurementIds) {
+          const opening = await table.get(openingId);
+          if (!opening) {
+            throw new VersionedAppendOnlyRuleViolationError(
+              `DerivedMeasurement "${record.derivedMeasurementId}": opening source "${openingId}" does not exist.`,
+            );
+          }
+          if (opening.outputQuantityType !== "AREA") {
+            throw new VersionedAppendOnlyRuleViolationError(
+              `DerivedMeasurement "${record.derivedMeasurementId}": opening source "${openingId}" has ` +
+                `outputQuantityType "${opening.outputQuantityType}", but openings must be "AREA".`,
+            );
+          }
+          if (seenOpeningTargetIds.has(opening.targetId)) {
+            throw new VersionedAppendOnlyRuleViolationError(
+              `DerivedMeasurement "${record.derivedMeasurementId}": duplicate opening source targetId ` +
+                `"${opening.targetId}" — at most one opening per source targetId is allowed.`,
+            );
+          }
+          seenOpeningTargetIds.add(opening.targetId);
+
+          const openingTarget = await db.spatialTarget.get(opening.targetId);
+          if (!openingTarget) {
+            throw new VersionedAppendOnlyRuleViolationError(
+              `DerivedMeasurement "${record.derivedMeasurementId}": opening source "${openingId}"'s targetId ` +
+                `"${opening.targetId}" does not reference an existing SpatialTarget.`,
+            );
+          }
+          if (openingTarget.targetType !== "OPENING") {
+            throw new VersionedAppendOnlyRuleViolationError(
+              `DerivedMeasurement "${record.derivedMeasurementId}": opening source "${openingId}"'s targetType ` +
+                `"${openingTarget.targetType}" is not "OPENING".`,
+            );
+          }
+          if (openingTarget.parentTargetId !== record.targetId) {
+            throw new VersionedAppendOnlyRuleViolationError(
+              `DerivedMeasurement "${record.derivedMeasurementId}": opening source "${openingId}"'s target ` +
+                `parentTargetId "${openingTarget.parentTargetId}" does not match this record's (the host's) ` +
+                `targetId "${record.targetId}".`,
+            );
+          }
+        }
+      }
+
       // --- Mandatory overlap acknowledgement for 2+ spatially-relevant
-      // inputs on GROSS_MINUS_OPENINGS/AGGREGATE_SUM/DEFECT_AREA_TOTAL. ---
+      // inputs on GROSS_MINUS_OPENINGS/AGGREGATE_SUM/DEFECT_AREA_TOTAL.
+      // For GROSS_MINUS_OPENINGS, the host counts as one additional
+      // spatially-relevant input alongside the openings list. ---
       const spatiallyRelevantInputCount =
+        (isGrossMinusOpenings && record.grossSourceDerivedMeasurementId !== undefined ? 1 : 0) +
         record.inputMeasurementIds.length + record.inputGeometryRefs.length + record.inputDerivedMeasurementIds.length;
       if (
         OVERLAP_ACK_REQUIRED_FORMULA_TYPES.includes(record.formulaType) &&

@@ -1451,3 +1451,606 @@ test("DerivedMeasurement: AGGREGATE_SUM source with mismatched outputQuantityTyp
     VersionedAppendOnlyRuleViolationError,
   );
 });
+
+// ---------------------------------------------------------------------------
+// G1-05B-GMO-IMP-01 — GROSS_MINUS_OPENINGS host/openings structural
+// implementation (FORMULA_AND_DERIVATION_CONTRACT.md §"GROSS_MINUS_OPENINGS
+// — host/openings structural split").
+// ---------------------------------------------------------------------------
+
+async function makeFormulaDefinitionForTargetTypes(
+  formulaType: Parameters<typeof formulaDefinitionRepository.create>[0]["formulaType"],
+  allowedTargetTypes: readonly string[],
+) {
+  const existing = await formulaDefinitionRepository.listVersions(formulaType);
+  const version = existing.length === 0 ? 1 : Math.max(...existing.map((row) => row.version)) + 1;
+  const record = makeFormulaRecord({ formulaType, version, allowedTargetTypes: allowedTargetTypes as never });
+  await formulaDefinitionRepository.create(record);
+  return record;
+}
+
+/** A FACADE/ROOF host target — real SpatialTarget, so openings can share its buildingId. */
+async function makeHostTarget(targetType: "FACADE" | "ROOF" = "FACADE") {
+  const targetId = nextId("target");
+  const buildingId = nextId("building");
+  await spatialTargetRepository.create({
+    targetId,
+    buildingId,
+    targetType,
+    replacesTargetIds: [],
+    status: "ACTIVE",
+  });
+  return { targetId, buildingId };
+}
+
+/** An OPENING target parented to the given host, in the host's own building. */
+async function makeOpeningTarget(host: { targetId: string; buildingId: string }) {
+  const targetId = nextId("target");
+  await spatialTargetRepository.create({
+    targetId,
+    buildingId: host.buildingId,
+    targetType: "OPENING",
+    parentTargetId: host.targetId,
+    replacesTargetIds: [],
+    status: "ACTIVE",
+  });
+  return targetId;
+}
+
+/** A real gross-area (AREA/RAW_AREA) DerivedMeasurement result on the given targetId. */
+async function makeGmoAreaResult(targetId: string) {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const derivedMeasurementId = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId,
+    formulaType: formula.formulaType,
+    formulaVersion: formula.version,
+    inputMeasurementIds: [nextId("measurement"), nextId("measurement")],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    targetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    calculationScope: targetId,
+    createdAt: new Date().toISOString(),
+  });
+  return derivedMeasurementId;
+}
+
+/** A real gross-area DerivedMeasurement result on an OPENING targetId (needs an OPENING-allowed FormulaDefinition). */
+async function makeGmoOpeningResult(openingTargetId: string) {
+  const formula = await makeFormulaDefinitionForTargetTypes("POLYGON_AREA", ["OPENING"]);
+  const derivedMeasurementId = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId,
+    formulaType: formula.formulaType,
+    formulaVersion: formula.version,
+    inputMeasurementIds: [],
+    inputGeometryRefs: [{ geometryId: nextId("geometry"), version: 1 }],
+    inputDerivedMeasurementIds: [],
+    targetId: openingTargetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    calculationScope: openingTargetId,
+    createdAt: new Date().toISOString(),
+  });
+  return derivedMeasurementId;
+}
+
+function makeGmoRecord(overrides: Partial<Parameters<typeof derivedMeasurementRepository.create>[0]> = {}) {
+  return {
+    derivedMeasurementId: nextId("derived"),
+    formulaType: "GROSS_MINUS_OPENINGS" as const,
+    formulaVersion: 1,
+    inputMeasurementIds: [],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    targetId: nextId("target"),
+    outputQuantityType: "AREA" as const,
+    semanticCategory: "NET_AREA" as const,
+    calculationScope: nextId("target"),
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+test("GROSS_MINUS_OPENINGS: host + 1 opening + overlap ack succeeds", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+  const openingTargetId = await makeOpeningTarget(host);
+  const openingResultId = await makeGmoOpeningResult(openingTargetId);
+
+  const derivedMeasurementId = nextId("derived");
+  await derivedMeasurementRepository.create(
+    makeGmoRecord({
+      derivedMeasurementId,
+      formulaVersion: gmoFormula.version,
+      grossSourceDerivedMeasurementId,
+      inputDerivedMeasurementIds: [openingResultId],
+      targetId: host.targetId,
+      calculationScope: host.targetId,
+      overlapReviewedBy: nextId("actor"),
+      overlapReviewedAt: new Date().toISOString(),
+    }),
+  );
+  const found = await derivedMeasurementRepository.getById(derivedMeasurementId);
+  assert.equal(found?.grossSourceDerivedMeasurementId, grossSourceDerivedMeasurementId);
+  assert.deepEqual(found?.inputDerivedMeasurementIds, [openingResultId]);
+});
+
+test("GROSS_MINUS_OPENINGS: missing grossSourceDerivedMeasurementId is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const openingResultId = await makeGmoOpeningResult(await makeOpeningTarget(host));
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          inputDerivedMeasurementIds: [openingResultId],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: grossSourceDerivedMeasurementId on a non-GMO formulaType is rejected", async () => {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = await makeTarget();
+  const someOtherId = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" });
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [nextId("measurement")],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: [],
+        grossSourceDerivedMeasurementId: someOtherId,
+        targetId,
+        outputQuantityType: "AREA",
+        semanticCategory: "RAW_AREA",
+        calculationScope: targetId,
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: self-referential grossSourceDerivedMeasurementId is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const openingResultId = await makeGmoOpeningResult(await makeOpeningTarget(host));
+  const derivedMeasurementId = nextId("derived");
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          derivedMeasurementId,
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId: derivedMeasurementId,
+          inputDerivedMeasurementIds: [openingResultId],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: nonexistent grossSourceDerivedMeasurementId is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const openingResultId = await makeGmoOpeningResult(await makeOpeningTarget(host));
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId: nextId("nonexistent-derived"),
+          inputDerivedMeasurementIds: [openingResultId],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: host targetId not matching record.targetId is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const otherHost = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+  const openingResultId = await makeGmoOpeningResult(await makeOpeningTarget(host));
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [openingResultId],
+          targetId: otherHost.targetId, // mismatch: host result's own targetId is `host`, not `otherHost`
+          calculationScope: otherHost.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: host with wrong outputQuantityType/semanticCategory is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  // A LENGTH/DEFECT_LENGTH_METRIC result — not a legitimate gross-area source.
+  const wrongTypeHost = await makeSourceDerivedMeasurement({
+    outputQuantityType: "LENGTH",
+    semanticCategory: "DEFECT_LENGTH_METRIC",
+  });
+  const openingResultId = await makeGmoOpeningResult(await makeOpeningTarget(host));
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId: wrongTypeHost,
+          inputDerivedMeasurementIds: [openingResultId],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: host also listed as an opening is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [grossSourceDerivedMeasurementId],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: zero openings is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: opening with wrong outputQuantityType is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+  const openingTargetId = await makeOpeningTarget(host);
+  const wrongQuantityOpening = await makeFormulaDefinitionForTargetTypes("POLYLINE_LENGTH", ["OPENING"]).then(
+    async (formula) => {
+      const derivedMeasurementId = nextId("derived");
+      await derivedMeasurementRepository.create({
+        derivedMeasurementId,
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [],
+        inputGeometryRefs: [{ geometryId: nextId("geometry"), version: 1 }],
+        inputDerivedMeasurementIds: [],
+        targetId: openingTargetId,
+        outputQuantityType: "LENGTH",
+        semanticCategory: "DEFECT_LENGTH_METRIC",
+        calculationScope: openingTargetId,
+        createdAt: new Date().toISOString(),
+      });
+      return derivedMeasurementId;
+    },
+  );
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [wrongQuantityOpening],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: opening whose target is not OPENING-typed is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+  // A ROOM result, not an OPENING — wrong target kind entirely.
+  const roomResultId = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" });
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [roomResultId],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: opening parented to a different host is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const differentHost = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+  // Opening is parented to `differentHost`, not `host`.
+  const openingResultId = await makeGmoOpeningResult(await makeOpeningTarget(differentHost));
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [openingResultId],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: duplicate opening source targetId is rejected", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+  const openingTargetId = await makeOpeningTarget(host);
+  const openingResultOne = await makeGmoOpeningResult(openingTargetId);
+  // Second, independent result on the SAME opening targetId.
+  const formula = await makeFormulaDefinitionForTargetTypes("POLYGON_AREA", ["OPENING"]);
+  const openingResultTwo = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId: openingResultTwo,
+    formulaType: formula.formulaType,
+    formulaVersion: formula.version,
+    inputMeasurementIds: [],
+    inputGeometryRefs: [{ geometryId: nextId("geometry"), version: 1 }],
+    inputDerivedMeasurementIds: [],
+    targetId: openingTargetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    calculationScope: openingTargetId,
+    createdAt: new Date().toISOString(),
+  });
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [openingResultOne, openingResultTwo],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: historical (superseded) host and opening sources remain valid pins", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+
+  // Host result, then superseded by a correction — same semanticResultKey (targetId/outputQuantityType/semanticCategory/calculationScope).
+  const hostV1 = await makeGmoAreaResult(host.targetId);
+  const hostFormula = await makeFormulaDefinition("RECTANGLE_AREA");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId: nextId("derived"),
+    formulaType: hostFormula.formulaType,
+    formulaVersion: hostFormula.version,
+    inputMeasurementIds: [nextId("measurement"), nextId("measurement")],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    supersedesDerivedMeasurementId: hostV1,
+    targetId: host.targetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    calculationScope: host.targetId,
+    createdAt: new Date().toISOString(),
+  });
+
+  const openingTargetId = await makeOpeningTarget(host);
+  const openingResultId = await makeGmoOpeningResult(openingTargetId);
+
+  // Pinning the now-superseded hostV1 (not its successor) must still succeed —
+  // no current-leaf enforcement (FORMULA_AND_DERIVATION_CONTRACT.md's
+  // historical/superseded-sources-permitted rule).
+  const derivedMeasurementId = nextId("derived");
+  await derivedMeasurementRepository.create(
+    makeGmoRecord({
+      derivedMeasurementId,
+      formulaVersion: gmoFormula.version,
+      grossSourceDerivedMeasurementId: hostV1,
+      inputDerivedMeasurementIds: [openingResultId],
+      targetId: host.targetId,
+      calculationScope: host.targetId,
+      overlapReviewedBy: nextId("actor"),
+      overlapReviewedAt: new Date().toISOString(),
+    }),
+  );
+  const found = await derivedMeasurementRepository.getById(derivedMeasurementId);
+  assert.equal(found?.grossSourceDerivedMeasurementId, hostV1);
+});
+
+test("GROSS_MINUS_OPENINGS: host + 1 opening without overlap acknowledgement is rejected (2 spatially-relevant inputs)", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+  const openingResultId = await makeGmoOpeningResult(await makeOpeningTarget(host));
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [openingResultId],
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+          // overlapReviewedBy/overlapReviewedAt deliberately omitted.
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: self-supersession composes correctly with host/opening validation", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+  const openingResultId = await makeGmoOpeningResult(await makeOpeningTarget(host));
+
+  const v1Id = nextId("derived");
+  await derivedMeasurementRepository.create(
+    makeGmoRecord({
+      derivedMeasurementId: v1Id,
+      formulaVersion: gmoFormula.version,
+      grossSourceDerivedMeasurementId,
+      inputDerivedMeasurementIds: [openingResultId],
+      targetId: host.targetId,
+      calculationScope: host.targetId,
+      overlapReviewedBy: nextId("actor"),
+      overlapReviewedAt: new Date().toISOString(),
+    }),
+  );
+
+  // v2 corrects v1 within the same semanticResultKey, reusing the same
+  // valid host + opening — the new host/opening validation must run
+  // (and pass) exactly as it did for v1, composed with the pre-existing
+  // supersession-chain checks (self-ref, predecessor-exists,
+  // sameSemanticResultKey, linear-successor).
+  const v2Id = nextId("derived");
+  await derivedMeasurementRepository.create(
+    makeGmoRecord({
+      derivedMeasurementId: v2Id,
+      formulaVersion: gmoFormula.version,
+      grossSourceDerivedMeasurementId,
+      inputDerivedMeasurementIds: [openingResultId],
+      supersedesDerivedMeasurementId: v1Id,
+      targetId: host.targetId,
+      calculationScope: host.targetId,
+      overlapReviewedBy: nextId("actor"),
+      overlapReviewedAt: new Date().toISOString(),
+    }),
+  );
+
+  const v2 = await derivedMeasurementRepository.getById(v2Id);
+  assert.equal(v2?.supersedesDerivedMeasurementId, v1Id);
+  assert.equal(v2?.grossSourceDerivedMeasurementId, grossSourceDerivedMeasurementId);
+  assert.deepEqual(v2?.inputDerivedMeasurementIds, [openingResultId]);
+
+  // A second, independent attempt to supersede v1 again must still be
+  // rejected — the successor chain remains linear, exactly as for every
+  // other formulaType — even though its own host/opening inputs would
+  // otherwise be perfectly valid.
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [openingResultId],
+          supersedesDerivedMeasurementId: v1Id,
+          targetId: host.targetId,
+          calculationScope: host.targetId,
+          overlapReviewedBy: nextId("actor"),
+          overlapReviewedAt: new Date().toISOString(),
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("GROSS_MINUS_OPENINGS: host SpatialTarget targetType outside {FACADE, ROOF} is rejected", async () => {
+  // A dedicated FormulaDefinition version matching the real frozen
+  // applicability table (FACADE/ROOF only) — not the shared test
+  // fixture's loose ["ROOM", "FACADE"] default — so this test proves the
+  // actual contract, not an artifact of the default fixture.
+  const gmoFormula = await makeFormulaDefinitionForTargetTypes("GROSS_MINUS_OPENINGS", ["FACADE", "ROOF"]);
+
+  const roomTargetId = nextId("target");
+  const buildingId = nextId("building");
+  await spatialTargetRepository.create({
+    targetId: roomTargetId,
+    buildingId,
+    targetType: "ROOM",
+    replacesTargetIds: [],
+    status: "ACTIVE",
+  });
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(roomTargetId);
+
+  const openingTargetId = nextId("target");
+  await spatialTargetRepository.create({
+    targetId: openingTargetId,
+    buildingId,
+    targetType: "OPENING",
+    parentTargetId: roomTargetId,
+    replacesTargetIds: [],
+    status: "ACTIVE",
+  });
+  const openingResultId = await makeGmoOpeningResult(openingTargetId);
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [openingResultId],
+          targetId: roomTargetId, // ROOM — not FACADE/ROOF
+          calculationScope: roomTargetId,
+          overlapReviewedBy: nextId("actor"),
+          overlapReviewedAt: new Date().toISOString(),
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
