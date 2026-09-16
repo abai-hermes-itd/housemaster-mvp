@@ -60,3 +60,64 @@ export interface FormulaDefinition {
 
 /** ACTIVE/DEPRECATED are fully derived, never stored — see formulaDefinitionRepository.getLifecycleStatus(). */
 export type FormulaLifecycleStatus = "ACTIVE" | "DEPRECATED";
+
+/**
+ * SF-02B — canonical `FormulaDefinition` field values, derived directly
+ * from FORMULA_AND_DERIVATION_CONTRACT.md's Applicability table and
+ * Semantic Categories section. Single source of truth shared by
+ * `formulaDefinitionRepository.create()`'s write-time enforcement and by
+ * test fixtures, so the two can never drift apart.
+ *
+ * Scope is intentionally narrower than "all 4 fields for all 8
+ * formulaTypes" — SF-02A found two genuine ambiguities that frozen text
+ * does not resolve, and this deliberately does NOT invent a rule for
+ * either:
+ *   - `AGGREGATE_SUM`'s own `(outputQuantityType, semanticCategory)` is
+ *     not fixed at the FormulaDefinition level — the formula is designed
+ *     to be reusable across different compatible categories, so no
+ *     single canonical pair exists to enforce. See
+ *     `CANONICAL_QUANTITY_CATEGORY` (AGGREGATE_SUM deliberately absent).
+ *   - `POLYLINE_LENGTH`'s `semanticCategory` is never assigned a value
+ *     anywhere in the frozen Semantic Categories table (which is itself
+ *     scoped "(for AGGREGATE_SUM compatibility)" only). Its
+ *     `outputQuantityType` (`LENGTH`) IS determinable and is enforced via
+ *     `CANONICAL_OUTPUT_QUANTITY_TYPE_ONLY`.
+ * `allowedTargetTypes` and `requiredGeometryType` ARE fully determinable
+ * for all 8 formulaTypes and are enforced without exception.
+ */
+export const CANONICAL_ALLOWED_TARGET_TYPES: Record<FormulaType, readonly TargetType[]> = {
+  RECTANGLE_AREA: ["ROOM", "BASEMENT_TECH", "FACADE", "ROOF", "ATTIC", "STAIR_AREA", "OPENING", "DEFECT_AREA"],
+  POLYGON_AREA: ["ROOM", "BASEMENT_TECH", "FACADE", "ROOF", "ATTIC", "STAIR_AREA", "OPENING", "DEFECT_AREA"],
+  VOLUME: ["ROOM", "BASEMENT_TECH", "ATTIC"],
+  POLYLINE_LENGTH: ["DEFECT_LINEAR"],
+  GROSS_MINUS_OPENINGS: ["FACADE", "ROOF"],
+  AGGREGATE_SUM: ["ROOM", "BASEMENT_TECH", "FACADE", "ROOF", "ATTIC", "STAIR_AREA"],
+  DEFECT_AREA_TOTAL: ["DEFECT_AREA"],
+  DEFECT_LENGTH_TOTAL: ["DEFECT_LINEAR"],
+};
+
+export const CANONICAL_REQUIRED_GEOMETRY_TYPE: Record<FormulaType, RequiredGeometryType> = {
+  RECTANGLE_AREA: "NONE",
+  POLYGON_AREA: "POLYGON",
+  VOLUME: "NONE",
+  POLYLINE_LENGTH: "POLYLINE",
+  GROSS_MINUS_OPENINGS: "NONE",
+  AGGREGATE_SUM: "NONE",
+  DEFECT_AREA_TOTAL: "NONE",
+  DEFECT_LENGTH_TOTAL: "NONE",
+};
+
+/** Fixed (outputQuantityType, semanticCategory) pair — only the 6 formulaTypes SF-02A found fully determinable. AGGREGATE_SUM is deliberately absent. */
+export const CANONICAL_QUANTITY_CATEGORY: Partial<Record<FormulaType, { outputQuantityType: OutputQuantityType; semanticCategory: SemanticCategory }>> = {
+  RECTANGLE_AREA: { outputQuantityType: "AREA", semanticCategory: "RAW_AREA" },
+  POLYGON_AREA: { outputQuantityType: "AREA", semanticCategory: "RAW_AREA" },
+  VOLUME: { outputQuantityType: "VOLUME", semanticCategory: "VOLUME_METRIC" },
+  GROSS_MINUS_OPENINGS: { outputQuantityType: "AREA", semanticCategory: "NET_AREA" },
+  DEFECT_AREA_TOTAL: { outputQuantityType: "AREA", semanticCategory: "DEFECT_AREA_METRIC" },
+  DEFECT_LENGTH_TOTAL: { outputQuantityType: "LENGTH", semanticCategory: "DEFECT_LENGTH_METRIC" },
+};
+
+/** POLYLINE_LENGTH only: outputQuantityType is determinable even though semanticCategory (SF-02A DEFERRED_POLYLINE_LENGTH_FIELDS) is not. */
+export const CANONICAL_OUTPUT_QUANTITY_TYPE_ONLY: Partial<Record<FormulaType, OutputQuantityType>> = {
+  POLYLINE_LENGTH: "LENGTH",
+};

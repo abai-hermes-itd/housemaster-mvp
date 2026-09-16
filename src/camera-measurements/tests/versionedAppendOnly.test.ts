@@ -7,7 +7,15 @@ import { geometryRepository } from "../persistence/repositories/geometryReposito
 import { formulaDefinitionRepository } from "../persistence/repositories/formulaDefinitionRepository.ts";
 import { derivedMeasurementRepository } from "../persistence/repositories/derivedMeasurementRepository.ts";
 import { spatialTargetRepository } from "../persistence/repositories/spatialTargetRepository.ts";
+import { db } from "../persistence/db.ts";
 import { canonicalizeAggregateCalculationScope } from "../domain/types/DerivedMeasurement.ts";
+import {
+  CANONICAL_ALLOWED_TARGET_TYPES,
+  CANONICAL_OUTPUT_QUANTITY_TYPE_ONLY,
+  CANONICAL_QUANTITY_CATEGORY,
+  CANONICAL_REQUIRED_GEOMETRY_TYPE,
+  FROZEN_FORMULA_TYPES,
+} from "../domain/types/FormulaDefinition.ts";
 import {
   AppendOnlyViolationError,
   ConcurrencyConflictError,
@@ -202,18 +210,30 @@ test("Geometry: concurrent next-version attempts produce exactly one success and
 // B. FormulaDefinition
 // ---------------------------------------------------------------------------
 
+// SF-02B: FormulaDefinition.allowedTargetTypes/requiredGeometryType/
+// outputQuantityType/semanticCategory are now write-time enforced against
+// the canonical per-formulaType values (FormulaDefinition.ts). Defaults
+// here are computed from that same canonical source so every fixture is
+// valid by construction, unless a test deliberately overrides a field to
+// exercise a rejection path.
 function makeFormulaRecord(overrides: Partial<Parameters<typeof formulaDefinitionRepository.create>[0]> = {}) {
+  const formulaType = overrides.formulaType ?? "RECTANGLE_AREA";
+  const canonicalQuantityCategory = CANONICAL_QUANTITY_CATEGORY[formulaType];
+  const defaultOutputQuantityType: Parameters<typeof formulaDefinitionRepository.create>[0]["outputQuantityType"] =
+    canonicalQuantityCategory?.outputQuantityType ?? CANONICAL_OUTPUT_QUANTITY_TYPE_ONLY[formulaType] ?? "AREA";
+  const defaultSemanticCategory: Parameters<typeof formulaDefinitionRepository.create>[0]["semanticCategory"] =
+    canonicalQuantityCategory?.semanticCategory ?? "RAW_AREA";
   return {
     formulaDefinitionId: nextId("formuladef"),
-    formulaType: "RECTANGLE_AREA" as const,
+    formulaType,
     version: 1,
     implementationRef: "impl://rectangle-area/v1",
     implementationHash: "sha256:rect1",
     inputContract: "2 scalar Measurements (length, width)",
-    outputQuantityType: "AREA" as const,
-    semanticCategory: "RAW_AREA" as const,
-    allowedTargetTypes: ["ROOM", "FACADE"] as const,
-    requiredGeometryType: "NONE" as const,
+    outputQuantityType: defaultOutputQuantityType,
+    semanticCategory: defaultSemanticCategory,
+    allowedTargetTypes: CANONICAL_ALLOWED_TARGET_TYPES[formulaType],
+    requiredGeometryType: CANONICAL_REQUIRED_GEOMETRY_TYPE[formulaType],
     ...overrides,
   };
 }
@@ -299,14 +319,99 @@ test("FormulaDefinition: invalid FormulaType rejected at persistence boundary", 
   await assert.rejects(() => formulaDefinitionRepository.create(record), VersionedAppendOnlyRuleViolationError);
 });
 
+// --- SF-02B: canonical FormulaDefinition semantic enforcement ---
+
+test("FormulaDefinition: canonically-correct definitions are accepted for every formulaType", async () => {
+  for (const formulaType of FROZEN_FORMULA_TYPES) {
+    const formula = await makeFormulaDefinition(formulaType);
+    const found = await formulaDefinitionRepository.getVersion(formulaType, formula.version);
+    assert.equal(found?.formulaType, formulaType);
+  }
+});
+
+test("FormulaDefinition: allowedTargetTypes not matching the frozen applicability table is rejected", async () => {
+  const record = makeFormulaRecord({
+    formulaType: "GROSS_MINUS_OPENINGS",
+    allowedTargetTypes: ["ROOM"], // real GROSS_MINUS_OPENINGS canonical set is [FACADE, ROOF]
+  });
+  await assert.rejects(() => formulaDefinitionRepository.create(record), VersionedAppendOnlyRuleViolationError);
+});
+
+test("FormulaDefinition: allowedTargetTypes broader than the frozen table is rejected (not just narrower)", async () => {
+  const canonical = CANONICAL_ALLOWED_TARGET_TYPES.GROSS_MINUS_OPENINGS;
+  const record = makeFormulaRecord({
+    formulaType: "GROSS_MINUS_OPENINGS",
+    allowedTargetTypes: [...canonical, "ROOM"], // superset of the canonical set
+  });
+  await assert.rejects(() => formulaDefinitionRepository.create(record), VersionedAppendOnlyRuleViolationError);
+});
+
+test("FormulaDefinition: requiredGeometryType not matching the frozen contract is rejected", async () => {
+  const record = makeFormulaRecord({
+    formulaType: "POLYGON_AREA",
+    requiredGeometryType: "NONE", // real POLYGON_AREA canonical value is POLYGON
+  });
+  await assert.rejects(() => formulaDefinitionRepository.create(record), VersionedAppendOnlyRuleViolationError);
+});
+
+test("FormulaDefinition: outputQuantityType/semanticCategory not matching the frozen contract is rejected (fully-determinable formulaType)", async () => {
+  const record = makeFormulaRecord({
+    formulaType: "VOLUME",
+    outputQuantityType: "AREA", // real VOLUME canonical value is VOLUME
+    semanticCategory: "RAW_AREA",
+  });
+  await assert.rejects(() => formulaDefinitionRepository.create(record), VersionedAppendOnlyRuleViolationError);
+});
+
+async function nextFreeVersion(formulaType: Parameters<typeof formulaDefinitionRepository.create>[0]["formulaType"]) {
+  const existing = await formulaDefinitionRepository.listVersions(formulaType);
+  return existing.length === 0 ? 1 : Math.max(...existing.map((row) => row.version)) + 1;
+}
+
+test("FormulaDefinition: POLYLINE_LENGTH's outputQuantityType is enforced even though its semanticCategory is deferred", async () => {
+  const wrongQuantity = makeFormulaRecord({
+    formulaType: "POLYLINE_LENGTH",
+    version: await nextFreeVersion("POLYLINE_LENGTH"),
+    outputQuantityType: "AREA", // real canonical value is LENGTH — enforced
+  });
+  await assert.rejects(() => formulaDefinitionRepository.create(wrongQuantity), VersionedAppendOnlyRuleViolationError);
+
+  // semanticCategory is SF-02A DEFERRED_POLYLINE_LENGTH_FIELDS — any value
+  // the type system allows must still be accepted at the persistence layer.
+  const anyCategoryAccepted = makeFormulaRecord({
+    formulaType: "POLYLINE_LENGTH",
+    version: await nextFreeVersion("POLYLINE_LENGTH"),
+    semanticCategory: "RAW_AREA", // deliberately NOT the "obvious" DEFECT_LENGTH_METRIC guess
+  });
+  await formulaDefinitionRepository.create(anyCategoryAccepted);
+  const found = await formulaDefinitionRepository.getVersion("POLYLINE_LENGTH", anyCategoryAccepted.version);
+  assert.equal(found?.semanticCategory, "RAW_AREA");
+});
+
+test("FormulaDefinition: AGGREGATE_SUM's outputQuantityType/semanticCategory remain fully unenforced (SF-02A deferred scope)", async () => {
+  // AGGREGATE_SUM is deliberately category-generic by design (SF-02A) — no
+  // canonical pair exists to enforce, so any combination the type system
+  // allows must be accepted.
+  const record = makeFormulaRecord({
+    formulaType: "AGGREGATE_SUM",
+    version: await nextFreeVersion("AGGREGATE_SUM"),
+    outputQuantityType: "VOLUME",
+    semanticCategory: "VOLUME_METRIC",
+  });
+  await formulaDefinitionRepository.create(record);
+  const found = await formulaDefinitionRepository.getVersion("AGGREGATE_SUM", record.version);
+  assert.equal(found?.outputQuantityType, "VOLUME");
+  assert.equal(found?.semanticCategory, "VOLUME_METRIC");
+});
+
 test("FormulaDefinition: repository update rejects, repository delete rejects", async () => {
-  const record = makeFormulaRecord({ formulaType: "DEFECT_LENGTH_TOTAL" });
+  const record = makeFormulaRecord({ formulaType: "DEFECT_LENGTH_TOTAL", version: await nextFreeVersion("DEFECT_LENGTH_TOTAL") });
   await formulaDefinitionRepository.create(record);
   await assert.rejects(
-    () => formulaDefinitionRepository.update([record.formulaType, 1], { implementationHash: "tampered" }),
+    () => formulaDefinitionRepository.update([record.formulaType, record.version], { implementationHash: "tampered" }),
     AppendOnlyViolationError,
   );
-  await assert.rejects(() => formulaDefinitionRepository.delete([record.formulaType, 1]), AppendOnlyViolationError);
+  await assert.rejects(() => formulaDefinitionRepository.delete([record.formulaType, record.version]), AppendOnlyViolationError);
 });
 
 // --- G1-05B-R2 R2-02: successor creation atomicity ---
@@ -406,10 +511,40 @@ async function makeTarget(
 async function makeSourceDerivedMeasurement(fields: {
   outputQuantityType: Parameters<typeof derivedMeasurementRepository.create>[0]["outputQuantityType"];
   semanticCategory: Parameters<typeof derivedMeasurementRepository.create>[0]["semanticCategory"];
+  targetType?: Parameters<typeof spatialTargetRepository.create>[0]["targetType"];
 }) {
-  const sourceFormula = await makeFormulaDefinition("RECTANGLE_AREA");
-  const targetId = await makeTarget();
+  const targetType = fields.targetType ?? "ROOM";
+  const targetId = await makeTarget(targetType);
   const derivedMeasurementId = nextId("derived");
+  // DEFECT_LINEAR is only in POLYLINE_LENGTH's canonical allowedTargetTypes
+  // (SF-02B) — RECTANGLE_AREA doesn't allow it — so a DEFECT_LINEAR-targeted
+  // source needs POLYLINE_LENGTH + a real POLYLINE geometry (its canonical
+  // requiredGeometryType). Every other target type still uses RECTANGLE_AREA
+  // (no geometry required), unchanged.
+  if (targetType === "DEFECT_LINEAR") {
+    const sourceFormula = await makeFormulaDefinition("POLYLINE_LENGTH");
+    const geometryId = nextId("geometry");
+    await geometryRepository.createNextVersion(geometryId, 0, {
+      primitiveType: "POLYLINE",
+      coordinates: [[0, 0], [1, 1]],
+      createdAt: new Date().toISOString(),
+    });
+    await derivedMeasurementRepository.create({
+      derivedMeasurementId,
+      formulaType: sourceFormula.formulaType,
+      formulaVersion: sourceFormula.version,
+      inputMeasurementIds: [],
+      inputGeometryRefs: [{ geometryId, version: 1 }],
+      inputDerivedMeasurementIds: [],
+      targetId,
+      outputQuantityType: fields.outputQuantityType,
+      semanticCategory: fields.semanticCategory,
+      calculationScope: targetId,
+      createdAt: new Date().toISOString(),
+    });
+    return derivedMeasurementId;
+  }
+  const sourceFormula = await makeFormulaDefinition("RECTANGLE_AREA");
   await derivedMeasurementRepository.create({
     derivedMeasurementId,
     formulaType: sourceFormula.formulaType,
@@ -451,6 +586,16 @@ test("DerivedMeasurement: create successor/correction version", async () => {
   const formula = await makeFormulaDefinition("POLYGON_AREA");
   const targetId = await makeTarget();
   const geometryId = nextId("geometry");
+  await geometryRepository.createNextVersion(geometryId, 0, {
+    primitiveType: "POLYGON",
+    coordinates: [[0, 0], [4, 0], [4, 3], [0, 3]],
+    createdAt: new Date().toISOString(),
+  });
+  await geometryRepository.createNextVersion(geometryId, 1, {
+    primitiveType: "POLYGON",
+    coordinates: [[0, 0], [5, 0], [5, 3], [0, 3]],
+    createdAt: new Date().toISOString(),
+  });
   const v1Id = nextId("derived");
   await derivedMeasurementRepository.create({
     derivedMeasurementId: v1Id,
@@ -525,13 +670,19 @@ test("DerivedMeasurement: old result remains unchanged/readable after a successo
 
 test("DerivedMeasurement: duplicate id rejected", async () => {
   const formula = await makeFormulaDefinition("POLYLINE_LENGTH");
-  const targetId = await makeTarget();
+  const targetId = await makeTarget("DEFECT_LINEAR");
+  const geometryId = nextId("geometry");
+  await geometryRepository.createNextVersion(geometryId, 0, {
+    primitiveType: "POLYLINE",
+    coordinates: [[0, 0], [1, 1]],
+    createdAt: new Date().toISOString(),
+  });
   const record = {
     derivedMeasurementId: nextId("derived"),
     formulaType: formula.formulaType,
     formulaVersion: formula.version,
     inputMeasurementIds: [],
-    inputGeometryRefs: [{ geometryId: nextId("geometry"), version: 1 }],
+    inputGeometryRefs: [{ geometryId, version: 1 }],
     inputDerivedMeasurementIds: [],
     targetId,
     outputQuantityType: "LENGTH" as const,
@@ -687,7 +838,7 @@ test("DerivedMeasurement: supersession across a different semanticResultKey is r
     inputMeasurementIds: [],
     inputGeometryRefs: [],
     inputDerivedMeasurementIds: [
-      await makeSourceDerivedMeasurement({ outputQuantityType: "LENGTH", semanticCategory: "DEFECT_LENGTH_METRIC" }),
+      await makeSourceDerivedMeasurement({ outputQuantityType: "LENGTH", semanticCategory: "DEFECT_LENGTH_METRIC", targetType: "DEFECT_LINEAR" }),
     ],
     targetId,
     outputQuantityType: "LENGTH",
@@ -699,6 +850,7 @@ test("DerivedMeasurement: supersession across a different semanticResultKey is r
   const anotherSourceId = await makeSourceDerivedMeasurement({
     outputQuantityType: "LENGTH",
     semanticCategory: "DEFECT_LENGTH_METRIC",
+    targetType: "DEFECT_LINEAR",
   });
   await assert.rejects(
     () =>
@@ -859,7 +1011,7 @@ test("DerivedMeasurement: historical pinned FormulaDefinition version remains un
   const formula = await makeFormulaDefinition("DEFECT_AREA_TOTAL");
   const before = await formulaDefinitionRepository.getVersion(formula.formulaType, formula.version);
   const targetId = nextId("target");
-  const sourceId = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "DEFECT_AREA_METRIC" });
+  const sourceId = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "DEFECT_AREA_METRIC", targetType: "DEFECT_AREA" });
   await derivedMeasurementRepository.create({
     derivedMeasurementId: nextId("derived"),
     formulaType: formula.formulaType,
@@ -1069,8 +1221,8 @@ test("DerivedMeasurement: supersession succeeds when the SAME aggregate inputs a
   const formula = await makeFormulaDefinition("DEFECT_AREA_TOTAL");
   const parentTargetId = nextId("target");
   const declaredScopeLabel = `parent:${parentTargetId}`;
-  const sourceA = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "DEFECT_AREA_METRIC" });
-  const sourceB = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "DEFECT_AREA_METRIC" });
+  const sourceA = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "DEFECT_AREA_METRIC", targetType: "DEFECT_AREA" });
+  const sourceB = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "DEFECT_AREA_METRIC", targetType: "DEFECT_AREA" });
 
   const v1Id = nextId("derived");
   await derivedMeasurementRepository.create({
@@ -1120,7 +1272,7 @@ test("DerivedMeasurement: supersession is rejected when aggregate inputs genuine
   const declaredScopeLabel = `parent:${parentTargetId}`;
 
   const v1Id = nextId("derived");
-  const v1SourceId = await makeSourceDerivedMeasurement({ outputQuantityType: "LENGTH", semanticCategory: "DEFECT_LENGTH_METRIC" });
+  const v1SourceId = await makeSourceDerivedMeasurement({ outputQuantityType: "LENGTH", semanticCategory: "DEFECT_LENGTH_METRIC", targetType: "DEFECT_LINEAR" });
   await derivedMeasurementRepository.create({
     derivedMeasurementId: v1Id,
     formulaType: formula.formulaType,
@@ -1141,6 +1293,7 @@ test("DerivedMeasurement: supersession is rejected when aggregate inputs genuine
   const differentSourceId = await makeSourceDerivedMeasurement({
     outputQuantityType: "LENGTH",
     semanticCategory: "DEFECT_LENGTH_METRIC",
+    targetType: "DEFECT_LINEAR",
   });
   await assert.rejects(
     () =>
@@ -1458,17 +1611,6 @@ test("DerivedMeasurement: AGGREGATE_SUM source with mismatched outputQuantityTyp
 // — host/openings structural split").
 // ---------------------------------------------------------------------------
 
-async function makeFormulaDefinitionForTargetTypes(
-  formulaType: Parameters<typeof formulaDefinitionRepository.create>[0]["formulaType"],
-  allowedTargetTypes: readonly string[],
-) {
-  const existing = await formulaDefinitionRepository.listVersions(formulaType);
-  const version = existing.length === 0 ? 1 : Math.max(...existing.map((row) => row.version)) + 1;
-  const record = makeFormulaRecord({ formulaType, version, allowedTargetTypes: allowedTargetTypes as never });
-  await formulaDefinitionRepository.create(record);
-  return record;
-}
-
 /** A FACADE/ROOF host target — real SpatialTarget, so openings can share its buildingId. */
 async function makeHostTarget(targetType: "FACADE" | "ROOF" = "FACADE") {
   const targetId = nextId("target");
@@ -1517,16 +1659,28 @@ async function makeGmoAreaResult(targetId: string) {
   return derivedMeasurementId;
 }
 
-/** A real gross-area DerivedMeasurement result on an OPENING targetId (needs an OPENING-allowed FormulaDefinition). */
+/**
+ * A real gross-area DerivedMeasurement result on an OPENING targetId.
+ * POLYGON_AREA's real canonical allowedTargetTypes already includes
+ * OPENING, so a plain FormulaDefinition suffices — but its canonical
+ * requiredGeometryType is POLYGON, so a real Geometry row is now required
+ * too (SF-02B).
+ */
 async function makeGmoOpeningResult(openingTargetId: string) {
-  const formula = await makeFormulaDefinitionForTargetTypes("POLYGON_AREA", ["OPENING"]);
+  const formula = await makeFormulaDefinition("POLYGON_AREA");
+  const geometryId = nextId("geometry");
+  await geometryRepository.createNextVersion(geometryId, 0, {
+    primitiveType: "POLYGON",
+    coordinates: [[0, 0], [1, 0], [1, 1], [0, 1]],
+    createdAt: new Date().toISOString(),
+  });
   const derivedMeasurementId = nextId("derived");
   await derivedMeasurementRepository.create({
     derivedMeasurementId,
     formulaType: formula.formulaType,
     formulaVersion: formula.version,
     inputMeasurementIds: [],
-    inputGeometryRefs: [{ geometryId: nextId("geometry"), version: 1 }],
+    inputGeometryRefs: [{ geometryId, version: 1 }],
     inputDerivedMeasurementIds: [],
     targetId: openingTargetId,
     outputQuantityType: "AREA",
@@ -1757,25 +1911,27 @@ test("GROSS_MINUS_OPENINGS: opening with wrong outputQuantityType is rejected", 
   const host = await makeHostTarget("FACADE");
   const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
   const openingTargetId = await makeOpeningTarget(host);
-  const wrongQuantityOpening = await makeFormulaDefinitionForTargetTypes("POLYLINE_LENGTH", ["OPENING"]).then(
-    async (formula) => {
-      const derivedMeasurementId = nextId("derived");
-      await derivedMeasurementRepository.create({
-        derivedMeasurementId,
-        formulaType: formula.formulaType,
-        formulaVersion: formula.version,
-        inputMeasurementIds: [],
-        inputGeometryRefs: [{ geometryId: nextId("geometry"), version: 1 }],
-        inputDerivedMeasurementIds: [],
-        targetId: openingTargetId,
-        outputQuantityType: "LENGTH",
-        semanticCategory: "DEFECT_LENGTH_METRIC",
-        calculationScope: openingTargetId,
-        createdAt: new Date().toISOString(),
-      });
-      return derivedMeasurementId;
-    },
-  );
+  // POLYLINE_LENGTH's real canonical allowedTargetTypes ([DEFECT_LINEAR])
+  // never includes OPENING, so a real derivedMeasurementRepository.create()
+  // call can never produce a LENGTH-typed result on an OPENING target —
+  // seed the row directly (bypassing repository-level applicability
+  // checks) so this test can exercise the GMO opening-quantity check
+  // against an EXISTING row, regardless of how it came to exist.
+  const lengthFormula = await makeFormulaDefinition("POLYLINE_LENGTH");
+  const wrongQuantityOpening = nextId("derived");
+  await db.derivedMeasurement.add({
+    derivedMeasurementId: wrongQuantityOpening,
+    formulaType: lengthFormula.formulaType,
+    formulaVersion: lengthFormula.version,
+    inputMeasurementIds: [],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    targetId: openingTargetId,
+    outputQuantityType: "LENGTH",
+    semanticCategory: "DEFECT_LENGTH_METRIC",
+    calculationScope: openingTargetId,
+    createdAt: new Date().toISOString(),
+  });
 
   await assert.rejects(
     () =>
@@ -1844,21 +2000,7 @@ test("GROSS_MINUS_OPENINGS: duplicate opening source targetId is rejected", asyn
   const openingTargetId = await makeOpeningTarget(host);
   const openingResultOne = await makeGmoOpeningResult(openingTargetId);
   // Second, independent result on the SAME opening targetId.
-  const formula = await makeFormulaDefinitionForTargetTypes("POLYGON_AREA", ["OPENING"]);
-  const openingResultTwo = nextId("derived");
-  await derivedMeasurementRepository.create({
-    derivedMeasurementId: openingResultTwo,
-    formulaType: formula.formulaType,
-    formulaVersion: formula.version,
-    inputMeasurementIds: [],
-    inputGeometryRefs: [{ geometryId: nextId("geometry"), version: 1 }],
-    inputDerivedMeasurementIds: [],
-    targetId: openingTargetId,
-    outputQuantityType: "AREA",
-    semanticCategory: "RAW_AREA",
-    calculationScope: openingTargetId,
-    createdAt: new Date().toISOString(),
-  });
+  const openingResultTwo = await makeGmoOpeningResult(openingTargetId);
 
   await assert.rejects(
     () =>
@@ -2010,11 +2152,10 @@ test("GROSS_MINUS_OPENINGS: self-supersession composes correctly with host/openi
 });
 
 test("GROSS_MINUS_OPENINGS: host SpatialTarget targetType outside {FACADE, ROOF} is rejected", async () => {
-  // A dedicated FormulaDefinition version matching the real frozen
-  // applicability table (FACADE/ROOF only) — not the shared test
-  // fixture's loose ["ROOM", "FACADE"] default — so this test proves the
-  // actual contract, not an artifact of the default fixture.
-  const gmoFormula = await makeFormulaDefinitionForTargetTypes("GROSS_MINUS_OPENINGS", ["FACADE", "ROOF"]);
+  // Since SF-02B, makeFormulaRecord()'s default allowedTargetTypes for
+  // GROSS_MINUS_OPENINGS IS the real frozen applicability table
+  // (FACADE/ROOF only) — no override needed to prove the actual contract.
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
 
   const roomTargetId = nextId("target");
   const buildingId = nextId("building");

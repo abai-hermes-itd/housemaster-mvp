@@ -1,7 +1,13 @@
 /**
  * FormulaDefinition — VERSIONED_APPEND_ONLY repository.
  */
-import { FROZEN_FORMULA_TYPES } from "../../domain/types/FormulaDefinition.ts";
+import {
+  CANONICAL_ALLOWED_TARGET_TYPES,
+  CANONICAL_OUTPUT_QUANTITY_TYPE_ONLY,
+  CANONICAL_QUANTITY_CATEGORY,
+  CANONICAL_REQUIRED_GEOMETRY_TYPE,
+  FROZEN_FORMULA_TYPES,
+} from "../../domain/types/FormulaDefinition.ts";
 import type { FormulaDefinition, FormulaLifecycleStatus, FormulaType } from "../../domain/types/FormulaDefinition.ts";
 import { db } from "../db.ts";
 import { createAppendOnlyRepository } from "../guards/appendOnlyRepository.ts";
@@ -32,6 +38,59 @@ export const formulaDefinitionRepository = {
           `FormulaDefinition: "${record.formulaType}" is not one of the 8 frozen formulaType values ` +
             `(${FROZEN_FORMULA_TYPES.join(", ")}).`,
         );
+      }
+
+      // --- SF-02B: canonical FormulaDefinition semantic enforcement ---
+      // allowedTargetTypes and requiredGeometryType are fully determinable
+      // from FORMULA_AND_DERIVATION_CONTRACT.md for all 8 formulaTypes and
+      // are enforced without exception (exact-set / exact-value match).
+      const canonicalAllowedTargetTypes = CANONICAL_ALLOWED_TARGET_TYPES[record.formulaType];
+      const actualTargetTypes = new Set(record.allowedTargetTypes);
+      const canonicalTargetTypes = new Set(canonicalAllowedTargetTypes);
+      const allowedTargetTypesMatch =
+        actualTargetTypes.size === canonicalTargetTypes.size &&
+        [...actualTargetTypes].every((t) => canonicalTargetTypes.has(t));
+      if (!allowedTargetTypesMatch) {
+        throw new VersionedAppendOnlyRuleViolationError(
+          `FormulaDefinition "${record.formulaType}": allowedTargetTypes must exactly match the frozen ` +
+            `applicability table (${canonicalAllowedTargetTypes.join(", ")}), got (${record.allowedTargetTypes.join(", ")}).`,
+        );
+      }
+
+      const canonicalGeometryType = CANONICAL_REQUIRED_GEOMETRY_TYPE[record.formulaType];
+      if (record.requiredGeometryType !== canonicalGeometryType) {
+        throw new VersionedAppendOnlyRuleViolationError(
+          `FormulaDefinition "${record.formulaType}": requiredGeometryType must be "${canonicalGeometryType}" ` +
+            `per the frozen contract, got "${record.requiredGeometryType}".`,
+        );
+      }
+
+      // outputQuantityType/semanticCategory: enforced only for the 6
+      // formulaTypes SF-02A found fully determinable. AGGREGATE_SUM is
+      // deliberately never checked here (genuinely category-generic by
+      // design — see CANONICAL_QUANTITY_CATEGORY's doc comment).
+      // POLYLINE_LENGTH's outputQuantityType is determinable and checked;
+      // its semanticCategory is deferred (SF-02A DEFERRED_POLYLINE_LENGTH_FIELDS).
+      const canonicalQuantityCategory = CANONICAL_QUANTITY_CATEGORY[record.formulaType];
+      if (canonicalQuantityCategory) {
+        if (
+          record.outputQuantityType !== canonicalQuantityCategory.outputQuantityType ||
+          record.semanticCategory !== canonicalQuantityCategory.semanticCategory
+        ) {
+          throw new VersionedAppendOnlyRuleViolationError(
+            `FormulaDefinition "${record.formulaType}": outputQuantityType/semanticCategory must be ` +
+              `"${canonicalQuantityCategory.outputQuantityType}"/"${canonicalQuantityCategory.semanticCategory}" ` +
+              `per the frozen contract, got "${record.outputQuantityType}"/"${record.semanticCategory}".`,
+          );
+        }
+      } else {
+        const fixedOutputQuantityType = CANONICAL_OUTPUT_QUANTITY_TYPE_ONLY[record.formulaType];
+        if (fixedOutputQuantityType !== undefined && record.outputQuantityType !== fixedOutputQuantityType) {
+          throw new VersionedAppendOnlyRuleViolationError(
+            `FormulaDefinition "${record.formulaType}": outputQuantityType must be "${fixedOutputQuantityType}" ` +
+              `per the frozen contract, got "${record.outputQuantityType}".`,
+          );
+        }
       }
 
       if (record.supersedesFormulaVersion !== undefined) {
