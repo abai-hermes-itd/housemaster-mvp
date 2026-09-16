@@ -72,6 +72,23 @@ export const derivedMeasurementRepository = {
       const isAggregateFormula = AGGREGATE_FORMULA_TYPES.includes(record.formulaType);
       const isGrossMinusOpenings = record.formulaType === "GROSS_MINUS_OPENINGS";
 
+      // --- SF-01: single-target calculationScope enforcement ---
+      // For single-target formulas (everything not in AGGREGATE_FORMULA_TYPES:
+      // RECTANGLE_AREA, POLYGON_AREA, VOLUME, POLYLINE_LENGTH,
+      // GROSS_MINUS_OPENINGS), FORMULA_AND_DERIVATION_CONTRACT.md's
+      // calculationScope section requires "a fixed, degenerate value equal
+      // to the subject targetId itself — there is no meaningful scope
+      // choice to record." Aggregate formulas compute their own canonical
+      // calculationScope later in this method and are exempt from this
+      // exact-equality check.
+      if (!isAggregateFormula && record.calculationScope !== record.targetId) {
+        throw new VersionedAppendOnlyRuleViolationError(
+          `DerivedMeasurement "${record.derivedMeasurementId}": formulaType "${record.formulaType}" is a ` +
+            `single-target formula — calculationScope must equal targetId exactly ("${record.targetId}"), got ` +
+            `"${record.calculationScope}".`,
+        );
+      }
+
       // --- grossSourceDerivedMeasurementId: required iff GROSS_MINUS_OPENINGS, forbidden otherwise ---
       if (isGrossMinusOpenings && record.grossSourceDerivedMeasurementId === undefined) {
         throw new VersionedAppendOnlyRuleViolationError(

@@ -2054,3 +2054,169 @@ test("GROSS_MINUS_OPENINGS: host SpatialTarget targetType outside {FACADE, ROOF}
     VersionedAppendOnlyRuleViolationError,
   );
 });
+
+// ---------------------------------------------------------------------------
+// SF-01 — single-target calculationScope enforcement.
+// ---------------------------------------------------------------------------
+
+test("SF-01: single-target formula — calculationScope exactly equal to targetId is accepted", async () => {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = await makeTarget();
+  const derivedMeasurementId = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId,
+    formulaType: formula.formulaType,
+    formulaVersion: formula.version,
+    inputMeasurementIds: [nextId("measurement"), nextId("measurement")],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    targetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    calculationScope: targetId,
+    createdAt: new Date().toISOString(),
+  });
+  const found = await derivedMeasurementRepository.getById(derivedMeasurementId);
+  assert.equal(found?.calculationScope, targetId);
+});
+
+test("SF-01: single-target formula — calculationScope naming a DIFFERENT targetId is rejected", async () => {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = await makeTarget();
+  const otherTargetId = await makeTarget();
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [nextId("measurement"), nextId("measurement")],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: [],
+        targetId,
+        outputQuantityType: "AREA",
+        semanticCategory: "RAW_AREA",
+        calculationScope: otherTargetId, // a different, real target's id — still wrong
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("SF-01: single-target formula — arbitrary calculationScope string is rejected", async () => {
+  const formula = await makeFormulaDefinition("VOLUME");
+  const targetId = await makeTarget();
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [nextId("measurement")],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: [],
+        targetId,
+        outputQuantityType: "VOLUME",
+        semanticCategory: "VOLUME_METRIC",
+        calculationScope: "not-a-target-id-at-all",
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("SF-01: single-target formula — composite/multi-target-looking calculationScope is rejected", async () => {
+  const formula = await makeFormulaDefinition("POLYLINE_LENGTH");
+  const targetId = await makeTarget();
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [],
+        inputGeometryRefs: [{ geometryId: nextId("geometry"), version: 1 }],
+        inputDerivedMeasurementIds: [],
+        targetId,
+        outputQuantityType: "LENGTH",
+        semanticCategory: "DEFECT_LENGTH_METRIC",
+        // Looks like an aggregate-style composite scope label — still
+        // invalid for a single-target formula, no matter its shape.
+        calculationScope: `parent:${targetId}+extra`,
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("SF-01: single-target formula — empty calculationScope is rejected", async () => {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = await makeTarget();
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [nextId("measurement"), nextId("measurement")],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: [],
+        targetId,
+        outputQuantityType: "AREA",
+        semanticCategory: "RAW_AREA",
+        calculationScope: "",
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("SF-01: GROSS_MINUS_OPENINGS (single-target) — calculationScope must equal targetId too", async () => {
+  const gmoFormula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
+  const host = await makeHostTarget("FACADE");
+  const grossSourceDerivedMeasurementId = await makeGmoAreaResult(host.targetId);
+  const openingResultId = await makeGmoOpeningResult(await makeOpeningTarget(host));
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create(
+        makeGmoRecord({
+          formulaVersion: gmoFormula.version,
+          grossSourceDerivedMeasurementId,
+          inputDerivedMeasurementIds: [openingResultId],
+          targetId: host.targetId,
+          calculationScope: "wrong-scope", // must equal host.targetId
+          overlapReviewedBy: nextId("actor"),
+          overlapReviewedAt: new Date().toISOString(),
+        }),
+      ),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("SF-01: aggregate formula behavior is unaffected — AGGREGATE_SUM still canonicalizes a declared label, not a raw targetId", async () => {
+  const formula = await makeFormulaDefinition("AGGREGATE_SUM");
+  const parentTargetId = nextId("target");
+  const declaredScopeLabel = `parent:${parentTargetId}`;
+  const source = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" });
+
+  const derivedMeasurementId = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId,
+    formulaType: formula.formulaType,
+    formulaVersion: formula.version,
+    inputMeasurementIds: [],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [source],
+    targetId: parentTargetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    // Deliberately NOT equal to parentTargetId — this must still be
+    // accepted, because SF-01's exact-equality rule applies only to
+    // single-target (non-aggregate) formulas.
+    calculationScope: declaredScopeLabel,
+    createdAt: new Date().toISOString(),
+  });
+  const found = await derivedMeasurementRepository.getById(derivedMeasurementId);
+  assert.ok(found?.calculationScope.includes(declaredScopeLabel));
+});
