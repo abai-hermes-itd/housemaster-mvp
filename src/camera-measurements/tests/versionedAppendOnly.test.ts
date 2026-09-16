@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { geometryRepository } from "../persistence/repositories/geometryRepository.ts";
 import { formulaDefinitionRepository } from "../persistence/repositories/formulaDefinitionRepository.ts";
 import { derivedMeasurementRepository } from "../persistence/repositories/derivedMeasurementRepository.ts";
+import { spatialTargetRepository } from "../persistence/repositories/spatialTargetRepository.ts";
 import { canonicalizeAggregateCalculationScope } from "../domain/types/DerivedMeasurement.ts";
 import {
   AppendOnlyViolationError,
@@ -373,9 +374,61 @@ async function makeFormulaDefinition(formulaType: Parameters<typeof formulaDefin
   return record;
 }
 
+// --- G1-05B-SH2: fixtures for the write-time applicability/aggregate/
+// overlap checks added to derivedMeasurementRepository.create() ---
+
+/**
+ * A real, persisted SpatialTarget — every `makeFormulaRecord()` fixture
+ * uses `allowedTargetTypes: ["ROOM", "FACADE"]`, so "ROOM" satisfies every
+ * formulaType's applicability check by default.
+ */
+async function makeTarget(
+  targetType: Parameters<typeof spatialTargetRepository.create>[0]["targetType"] = "ROOM",
+) {
+  const targetId = nextId("target");
+  await spatialTargetRepository.create({
+    targetId,
+    buildingId: nextId("building"),
+    targetType,
+    replacesTargetIds: [],
+    status: "ACTIVE",
+  });
+  return targetId;
+}
+
+/**
+ * A real, valid single-subject DerivedMeasurement (via a real RECTANGLE_AREA
+ * FormulaDefinition + a real SpatialTarget) to use as a source input for an
+ * aggregate-formula test — so aggregate-source validation (existence,
+ * homogeneity, applicable targetType) has something real to resolve
+ * against, instead of a bare fabricated id.
+ */
+async function makeSourceDerivedMeasurement(fields: {
+  outputQuantityType: Parameters<typeof derivedMeasurementRepository.create>[0]["outputQuantityType"];
+  semanticCategory: Parameters<typeof derivedMeasurementRepository.create>[0]["semanticCategory"];
+}) {
+  const sourceFormula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = await makeTarget();
+  const derivedMeasurementId = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId,
+    formulaType: sourceFormula.formulaType,
+    formulaVersion: sourceFormula.version,
+    inputMeasurementIds: [nextId("measurement"), nextId("measurement")],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    targetId,
+    outputQuantityType: fields.outputQuantityType,
+    semanticCategory: fields.semanticCategory,
+    calculationScope: targetId,
+    createdAt: new Date().toISOString(),
+  });
+  return derivedMeasurementId;
+}
+
 test("DerivedMeasurement: create initial version", async () => {
   const formula = await makeFormulaDefinition("RECTANGLE_AREA");
-  const targetId = nextId("target");
+  const targetId = await makeTarget();
   const derivedMeasurementId = nextId("derived");
   await derivedMeasurementRepository.create({
     derivedMeasurementId,
@@ -396,7 +449,7 @@ test("DerivedMeasurement: create initial version", async () => {
 
 test("DerivedMeasurement: create successor/correction version", async () => {
   const formula = await makeFormulaDefinition("POLYGON_AREA");
-  const targetId = nextId("target");
+  const targetId = await makeTarget();
   const geometryId = nextId("geometry");
   const v1Id = nextId("derived");
   await derivedMeasurementRepository.create({
@@ -435,7 +488,7 @@ test("DerivedMeasurement: create successor/correction version", async () => {
 
 test("DerivedMeasurement: old result remains unchanged/readable after a successor is created", async () => {
   const formula = await makeFormulaDefinition("VOLUME");
-  const targetId = nextId("target");
+  const targetId = await makeTarget();
   const v1Id = nextId("derived");
   await derivedMeasurementRepository.create({
     derivedMeasurementId: v1Id,
@@ -472,7 +525,7 @@ test("DerivedMeasurement: old result remains unchanged/readable after a successo
 
 test("DerivedMeasurement: duplicate id rejected", async () => {
   const formula = await makeFormulaDefinition("POLYLINE_LENGTH");
-  const targetId = nextId("target");
+  const targetId = await makeTarget();
   const record = {
     derivedMeasurementId: nextId("derived"),
     formulaType: formula.formulaType,
@@ -538,7 +591,7 @@ test("DerivedMeasurement: referenced formulaDefinition version must exist (formu
 
 test("DerivedMeasurement: exact input IDs preserved", async () => {
   const formula = await makeFormulaDefinition("RECTANGLE_AREA");
-  const targetId = nextId("target");
+  const targetId = await makeTarget();
   const measurementIds = [nextId("measurement"), nextId("measurement")];
   const derivedMeasurementId = nextId("derived");
   await derivedMeasurementRepository.create({
@@ -561,7 +614,11 @@ test("DerivedMeasurement: exact input IDs preserved", async () => {
 test("DerivedMeasurement: aggregate input set preserved exactly", async () => {
   const formula = await makeFormulaDefinition("AGGREGATE_SUM");
   const parentTargetId = nextId("target");
-  const sourceDerivedIds = [nextId("derived"), nextId("derived"), nextId("derived")];
+  const sourceDerivedIds = [
+    await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" }),
+    await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" }),
+    await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" }),
+  ];
   const derivedMeasurementId = nextId("derived");
   const declaredScopeLabel = `parent:${parentTargetId}`;
   await derivedMeasurementRepository.create({
@@ -598,7 +655,7 @@ test("DerivedMeasurement: aggregate input set preserved exactly", async () => {
 
 test("DerivedMeasurement: missing predecessor rejected", async () => {
   const formula = await makeFormulaDefinition("GROSS_MINUS_OPENINGS");
-  const targetId = nextId("target");
+  const targetId = await makeTarget();
   await assert.rejects(
     () =>
       derivedMeasurementRepository.create({
@@ -629,7 +686,9 @@ test("DerivedMeasurement: supersession across a different semanticResultKey is r
     formulaVersion: formula.version,
     inputMeasurementIds: [],
     inputGeometryRefs: [],
-    inputDerivedMeasurementIds: [nextId("derived")],
+    inputDerivedMeasurementIds: [
+      await makeSourceDerivedMeasurement({ outputQuantityType: "LENGTH", semanticCategory: "DEFECT_LENGTH_METRIC" }),
+    ],
     targetId,
     outputQuantityType: "LENGTH",
     semanticCategory: "DEFECT_LENGTH_METRIC",
@@ -637,6 +696,10 @@ test("DerivedMeasurement: supersession across a different semanticResultKey is r
     createdAt: new Date().toISOString(),
   });
 
+  const anotherSourceId = await makeSourceDerivedMeasurement({
+    outputQuantityType: "LENGTH",
+    semanticCategory: "DEFECT_LENGTH_METRIC",
+  });
   await assert.rejects(
     () =>
       derivedMeasurementRepository.create({
@@ -645,7 +708,7 @@ test("DerivedMeasurement: supersession across a different semanticResultKey is r
         formulaVersion: formula.version,
         inputMeasurementIds: [],
         inputGeometryRefs: [],
-        inputDerivedMeasurementIds: [nextId("derived")],
+        inputDerivedMeasurementIds: [anotherSourceId],
         supersedesDerivedMeasurementId: v1Id,
         targetId: nextId("a-different-target"), // different targetId -> different semanticResultKey
         outputQuantityType: "LENGTH",
@@ -659,7 +722,7 @@ test("DerivedMeasurement: supersession across a different semanticResultKey is r
 
 test("DerivedMeasurement: repository update rejects, repository delete rejects", async () => {
   const formula = await makeFormulaDefinition("VOLUME");
-  const targetId = nextId("target");
+  const targetId = await makeTarget();
   const derivedMeasurementId = nextId("derived");
   await derivedMeasurementRepository.create({
     derivedMeasurementId,
@@ -686,7 +749,7 @@ test("DerivedMeasurement: repository update rejects, repository delete rejects",
 
 test("DerivedMeasurement: a second sequential successor to the same predecessor is rejected", async () => {
   const formula = await makeFormulaDefinition("RECTANGLE_AREA");
-  const targetId = nextId("target");
+  const targetId = await makeTarget();
   const v1Id = nextId("derived");
   await derivedMeasurementRepository.create({
     derivedMeasurementId: v1Id,
@@ -738,7 +801,7 @@ test("DerivedMeasurement: a second sequential successor to the same predecessor 
 
 test("DerivedMeasurement: two concurrent successor creates against the same predecessor — exactly one succeeds, exactly one rejects", async () => {
   const formula = await makeFormulaDefinition("VOLUME");
-  const targetId = nextId("target");
+  const targetId = await makeTarget();
   const v1Id = nextId("derived");
   await derivedMeasurementRepository.create({
     derivedMeasurementId: v1Id,
@@ -796,13 +859,14 @@ test("DerivedMeasurement: historical pinned FormulaDefinition version remains un
   const formula = await makeFormulaDefinition("DEFECT_AREA_TOTAL");
   const before = await formulaDefinitionRepository.getVersion(formula.formulaType, formula.version);
   const targetId = nextId("target");
+  const sourceId = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "DEFECT_AREA_METRIC" });
   await derivedMeasurementRepository.create({
     derivedMeasurementId: nextId("derived"),
     formulaType: formula.formulaType,
     formulaVersion: formula.version,
     inputMeasurementIds: [],
     inputGeometryRefs: [],
-    inputDerivedMeasurementIds: [nextId("derived")],
+    inputDerivedMeasurementIds: [sourceId],
     targetId,
     outputQuantityType: "AREA",
     semanticCategory: "DEFECT_AREA_METRIC",
@@ -965,7 +1029,10 @@ test("DerivedMeasurement: AGGREGATE_SUM calculationScope contains the declared s
   const formula = await makeFormulaDefinition("AGGREGATE_SUM");
   const parentTargetId = nextId("target");
   const declaredScopeLabel = `parent:${parentTargetId}`;
-  const inputDerivedMeasurementIds = [nextId("derived"), nextId("derived")];
+  const inputDerivedMeasurementIds = [
+    await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" }),
+    await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" }),
+  ];
   const derivedMeasurementId = nextId("derived");
   await derivedMeasurementRepository.create({
     derivedMeasurementId,
@@ -978,6 +1045,8 @@ test("DerivedMeasurement: AGGREGATE_SUM calculationScope contains the declared s
     outputQuantityType: "AREA",
     semanticCategory: "RAW_AREA",
     calculationScope: declaredScopeLabel,
+    overlapReviewedBy: nextId("actor"),
+    overlapReviewedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   });
   const found = await derivedMeasurementRepository.getById(derivedMeasurementId);
@@ -1000,8 +1069,8 @@ test("DerivedMeasurement: supersession succeeds when the SAME aggregate inputs a
   const formula = await makeFormulaDefinition("DEFECT_AREA_TOTAL");
   const parentTargetId = nextId("target");
   const declaredScopeLabel = `parent:${parentTargetId}`;
-  const sourceA = nextId("derived");
-  const sourceB = nextId("derived");
+  const sourceA = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "DEFECT_AREA_METRIC" });
+  const sourceB = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "DEFECT_AREA_METRIC" });
 
   const v1Id = nextId("derived");
   await derivedMeasurementRepository.create({
@@ -1015,6 +1084,8 @@ test("DerivedMeasurement: supersession succeeds when the SAME aggregate inputs a
     outputQuantityType: "AREA",
     semanticCategory: "DEFECT_AREA_METRIC",
     calculationScope: declaredScopeLabel,
+    overlapReviewedBy: nextId("actor"),
+    overlapReviewedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   });
 
@@ -1032,6 +1103,8 @@ test("DerivedMeasurement: supersession succeeds when the SAME aggregate inputs a
     outputQuantityType: "AREA",
     semanticCategory: "DEFECT_AREA_METRIC",
     calculationScope: declaredScopeLabel,
+    overlapReviewedBy: nextId("actor"),
+    overlapReviewedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   });
 
@@ -1047,13 +1120,14 @@ test("DerivedMeasurement: supersession is rejected when aggregate inputs genuine
   const declaredScopeLabel = `parent:${parentTargetId}`;
 
   const v1Id = nextId("derived");
+  const v1SourceId = await makeSourceDerivedMeasurement({ outputQuantityType: "LENGTH", semanticCategory: "DEFECT_LENGTH_METRIC" });
   await derivedMeasurementRepository.create({
     derivedMeasurementId: v1Id,
     formulaType: formula.formulaType,
     formulaVersion: formula.version,
     inputMeasurementIds: [],
     inputGeometryRefs: [],
-    inputDerivedMeasurementIds: [nextId("derived")],
+    inputDerivedMeasurementIds: [v1SourceId],
     targetId: parentTargetId,
     outputQuantityType: "LENGTH",
     semanticCategory: "DEFECT_LENGTH_METRIC",
@@ -1064,6 +1138,10 @@ test("DerivedMeasurement: supersession is rejected when aggregate inputs genuine
   // Same declared label, but a genuinely different resolved input set —
   // per the frozen text, this must NOT compare as the same
   // semanticResultKey, even though the label alone matches.
+  const differentSourceId = await makeSourceDerivedMeasurement({
+    outputQuantityType: "LENGTH",
+    semanticCategory: "DEFECT_LENGTH_METRIC",
+  });
   await assert.rejects(
     () =>
       derivedMeasurementRepository.create({
@@ -1072,12 +1150,302 @@ test("DerivedMeasurement: supersession is rejected when aggregate inputs genuine
         formulaVersion: formula.version,
         inputMeasurementIds: [],
         inputGeometryRefs: [],
-        inputDerivedMeasurementIds: [nextId("a-completely-different-source-derived")],
+        inputDerivedMeasurementIds: [differentSourceId],
         supersedesDerivedMeasurementId: v1Id,
         targetId: parentTargetId,
         outputQuantityType: "LENGTH",
         semanticCategory: "DEFECT_LENGTH_METRIC",
         calculationScope: declaredScopeLabel,
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// G1-05B-SH2 — write-time applicability / aggregate-input-contract /
+// overlap-acknowledgement checks (FORMULA_AND_DERIVATION_CONTRACT.md).
+// ---------------------------------------------------------------------------
+
+test("DerivedMeasurement: rejected when targetId's targetType is not in the formula's allowedTargetTypes", async () => {
+  const formulaType = "VOLUME" as const;
+  const existing = await formulaDefinitionRepository.listVersions(formulaType);
+  const version = existing.length === 0 ? 1 : Math.max(...existing.map((row) => row.version)) + 1;
+  // VOLUME's real applicability table excludes OPENING entirely; the shared
+  // makeFormulaRecord() fixture only ever declares ["ROOM", "FACADE"].
+  await formulaDefinitionRepository.create(makeFormulaRecord({ formulaType, version }));
+  const targetId = await makeTarget("OPENING");
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType,
+        formulaVersion: version,
+        inputMeasurementIds: [nextId("measurement")],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: [],
+        targetId,
+        outputQuantityType: "VOLUME",
+        semanticCategory: "VOLUME_METRIC",
+        calculationScope: targetId,
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("DerivedMeasurement: rejected when targetId does not reference an existing SpatialTarget", async () => {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = nextId("nonexistent-target");
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [nextId("measurement")],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: [],
+        targetId,
+        outputQuantityType: "AREA",
+        semanticCategory: "RAW_AREA",
+        calculationScope: targetId,
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("DerivedMeasurement: rejected when a pinned geometry's primitiveType does not match the formula's requiredGeometryType", async () => {
+  const formulaType = "POLYGON_AREA" as const;
+  const existing = await formulaDefinitionRepository.listVersions(formulaType);
+  const version = existing.length === 0 ? 1 : Math.max(...existing.map((row) => row.version)) + 1;
+  await formulaDefinitionRepository.create(makeFormulaRecord({ formulaType, version, requiredGeometryType: "POLYGON" }));
+  const targetId = await makeTarget();
+  const geometryId = nextId("geometry");
+  // A POLYLINE, not the required POLYGON.
+  await geometryRepository.createNextVersion(geometryId, 0, {
+    primitiveType: "POLYLINE",
+    coordinates: [[0, 0], [1, 1]],
+    createdAt: new Date().toISOString(),
+  });
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType,
+        formulaVersion: version,
+        inputMeasurementIds: [],
+        inputGeometryRefs: [{ geometryId, version: 1 }],
+        inputDerivedMeasurementIds: [],
+        targetId,
+        outputQuantityType: "AREA",
+        semanticCategory: "RAW_AREA",
+        calculationScope: targetId,
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("DerivedMeasurement: accepted when the pinned geometry's primitiveType matches the formula's requiredGeometryType", async () => {
+  const formulaType = "POLYGON_AREA" as const;
+  const existing = await formulaDefinitionRepository.listVersions(formulaType);
+  const version = existing.length === 0 ? 1 : Math.max(...existing.map((row) => row.version)) + 1;
+  await formulaDefinitionRepository.create(makeFormulaRecord({ formulaType, version, requiredGeometryType: "POLYGON" }));
+  const targetId = await makeTarget();
+  const geometryId = nextId("geometry");
+  await geometryRepository.createNextVersion(geometryId, 0, {
+    primitiveType: "POLYGON",
+    coordinates: [[0, 0], [4, 0], [4, 3], [0, 3]],
+    createdAt: new Date().toISOString(),
+  });
+
+  const derivedMeasurementId = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId,
+    formulaType,
+    formulaVersion: version,
+    inputMeasurementIds: [],
+    inputGeometryRefs: [{ geometryId, version: 1 }],
+    inputDerivedMeasurementIds: [],
+    targetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    calculationScope: targetId,
+    createdAt: new Date().toISOString(),
+  });
+  const found = await derivedMeasurementRepository.getById(derivedMeasurementId);
+  assert.equal(found?.derivedMeasurementId, derivedMeasurementId);
+});
+
+test("DerivedMeasurement: AGGREGATE_SUM with 2+ inputs and no overlap acknowledgement is rejected", async () => {
+  const formula = await makeFormulaDefinition("AGGREGATE_SUM");
+  const parentTargetId = nextId("target");
+  const sources = [
+    await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" }),
+    await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" }),
+  ];
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: sources,
+        targetId: parentTargetId,
+        outputQuantityType: "AREA",
+        semanticCategory: "RAW_AREA",
+        calculationScope: `parent:${parentTargetId}`,
+        // overlapReviewedBy/overlapReviewedAt deliberately omitted.
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("DerivedMeasurement: AGGREGATE_SUM with a single input does not require overlap acknowledgement", async () => {
+  const formula = await makeFormulaDefinition("AGGREGATE_SUM");
+  const parentTargetId = nextId("target");
+  const source = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" });
+
+  const derivedMeasurementId = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId,
+    formulaType: formula.formulaType,
+    formulaVersion: formula.version,
+    inputMeasurementIds: [],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [source],
+    targetId: parentTargetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    calculationScope: `parent:${parentTargetId}`,
+    createdAt: new Date().toISOString(),
+  });
+  const found = await derivedMeasurementRepository.getById(derivedMeasurementId);
+  assert.equal(found?.derivedMeasurementId, derivedMeasurementId);
+});
+
+test("DerivedMeasurement: AGGREGATE_SUM sources spanning 2 distinct source targetTypes are rejected", async () => {
+  const formula = await makeFormulaDefinition("AGGREGATE_SUM");
+  const parentTargetId = nextId("target");
+  const roomSource = await makeSourceDerivedMeasurement({ outputQuantityType: "AREA", semanticCategory: "RAW_AREA" });
+  // A source whose own target is FACADE, not ROOM — allowedTargetTypes on
+  // the shared fixture is ["ROOM", "FACADE"], so this is individually
+  // applicable, but mixing it with a ROOM source violates "exactly one
+  // explicit source targetType."
+  const facadeFormula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const facadeTargetId = await makeTarget("FACADE");
+  const facadeSourceId = nextId("derived");
+  await derivedMeasurementRepository.create({
+    derivedMeasurementId: facadeSourceId,
+    formulaType: facadeFormula.formulaType,
+    formulaVersion: facadeFormula.version,
+    inputMeasurementIds: [nextId("measurement")],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    targetId: facadeTargetId,
+    outputQuantityType: "AREA",
+    semanticCategory: "RAW_AREA",
+    calculationScope: facadeTargetId,
+    createdAt: new Date().toISOString(),
+  });
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: [roomSource, facadeSourceId],
+        targetId: parentTargetId,
+        outputQuantityType: "AREA",
+        semanticCategory: "RAW_AREA",
+        calculationScope: `parent:${parentTargetId}`,
+        overlapReviewedBy: nextId("actor"),
+        overlapReviewedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("DerivedMeasurement: AGGREGATE_SUM with a duplicate source targetId is rejected", async () => {
+  const formula = await makeFormulaDefinition("AGGREGATE_SUM");
+  const parentTargetId = nextId("target");
+  const sharedTargetId = await makeTarget();
+  const sourceFormula = await makeFormulaDefinition("RECTANGLE_AREA");
+
+  async function sourceOnSharedTarget() {
+    const derivedMeasurementId = nextId("derived");
+    await derivedMeasurementRepository.create({
+      derivedMeasurementId,
+      formulaType: sourceFormula.formulaType,
+      formulaVersion: sourceFormula.version,
+      inputMeasurementIds: [nextId("measurement")],
+      inputGeometryRefs: [],
+      inputDerivedMeasurementIds: [],
+      targetId: sharedTargetId,
+      outputQuantityType: "AREA",
+      semanticCategory: "RAW_AREA",
+      calculationScope: sharedTargetId,
+      createdAt: new Date().toISOString(),
+    });
+    return derivedMeasurementId;
+  }
+  // Two independent (non-superseding) DerivedMeasurement rows for the
+  // SAME source targetId — an aggregate must never include both.
+  const sourceOne = await sourceOnSharedTarget();
+  const sourceTwo = await sourceOnSharedTarget();
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: [sourceOne, sourceTwo],
+        targetId: parentTargetId,
+        outputQuantityType: "AREA",
+        semanticCategory: "RAW_AREA",
+        calculationScope: `parent:${parentTargetId}`,
+        overlapReviewedBy: nextId("actor"),
+        overlapReviewedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+      }),
+    VersionedAppendOnlyRuleViolationError,
+  );
+});
+
+test("DerivedMeasurement: AGGREGATE_SUM source with mismatched outputQuantityType is rejected", async () => {
+  const formula = await makeFormulaDefinition("AGGREGATE_SUM");
+  const parentTargetId = nextId("target");
+  const mismatchedSource = await makeSourceDerivedMeasurement({ outputQuantityType: "LENGTH", semanticCategory: "DEFECT_LENGTH_METRIC" });
+
+  await assert.rejects(
+    () =>
+      derivedMeasurementRepository.create({
+        derivedMeasurementId: nextId("derived"),
+        formulaType: formula.formulaType,
+        formulaVersion: formula.version,
+        inputMeasurementIds: [],
+        inputGeometryRefs: [],
+        inputDerivedMeasurementIds: [mismatchedSource],
+        targetId: parentTargetId,
+        outputQuantityType: "AREA",
+        semanticCategory: "RAW_AREA",
+        calculationScope: `parent:${parentTargetId}`,
         createdAt: new Date().toISOString(),
       }),
     VersionedAppendOnlyRuleViolationError,
