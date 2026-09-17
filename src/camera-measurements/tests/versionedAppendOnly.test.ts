@@ -7,6 +7,7 @@ import { geometryRepository } from "../persistence/repositories/geometryReposito
 import { formulaDefinitionRepository } from "../persistence/repositories/formulaDefinitionRepository.ts";
 import { derivedMeasurementRepository } from "../persistence/repositories/derivedMeasurementRepository.ts";
 import { spatialTargetRepository } from "../persistence/repositories/spatialTargetRepository.ts";
+import { actorRefRepository } from "../persistence/repositories/actorRefRepository.ts";
 import { db } from "../persistence/db.ts";
 import { canonicalizeAggregateCalculationScope } from "../domain/types/DerivedMeasurement.ts";
 import {
@@ -17,12 +18,37 @@ import {
   FROZEN_FORMULA_TYPES,
 } from "../domain/types/FormulaDefinition.ts";
 import {
+  ActorInactiveError,
+  ActorNotFoundError,
+  ActorTypeViolationError,
   AppendOnlyViolationError,
   ConcurrencyConflictError,
   DuplicateVersionError,
   VersionedAppendOnlyRuleViolationError,
 } from "../persistence/guards/errors.ts";
 import { nextId } from "./testIds.ts";
+
+// --- SF-03-RECOVERY: real seeded ActorRef reviewers, matching the
+// makeHuman()/makeAgent()/makeInactive() pattern already used in
+// appendOnlyFacts.test.ts, so overlapReviewedBy resolves through the real
+// ActorRef lookup instead of a bare fabricated id. ---
+async function makeHumanReviewer(): Promise<string> {
+  const actorId = nextId("actor");
+  await actorRefRepository.create({ actorId, actorType: "HUMAN_OPERATOR", displayName: "Reviewer", status: "ACTIVE" });
+  return actorId;
+}
+
+async function makeAgentReviewer(): Promise<string> {
+  const actorId = nextId("actor");
+  await actorRefRepository.create({ actorId, actorType: "AGENT", displayName: "Reviewer Bot", status: "ACTIVE" });
+  return actorId;
+}
+
+async function makeInactiveHumanReviewer(): Promise<string> {
+  const actorId = nextId("actor");
+  await actorRefRepository.create({ actorId, actorType: "HUMAN_OPERATOR", displayName: "Former Reviewer", status: "INACTIVE" });
+  return actorId;
+}
 
 // ---------------------------------------------------------------------------
 // A. Geometry
@@ -783,7 +809,7 @@ test("DerivedMeasurement: aggregate input set preserved exactly", async () => {
     outputQuantityType: "AREA",
     semanticCategory: "RAW_AREA",
     calculationScope: declaredScopeLabel,
-    overlapReviewedBy: nextId("actor"),
+    overlapReviewedBy: await makeHumanReviewer(),
     overlapReviewedAt: new Date().toISOString(),
     overlapRiskNoted: true,
     createdAt: new Date().toISOString(),
@@ -1197,7 +1223,7 @@ test("DerivedMeasurement: AGGREGATE_SUM calculationScope contains the declared s
     outputQuantityType: "AREA",
     semanticCategory: "RAW_AREA",
     calculationScope: declaredScopeLabel,
-    overlapReviewedBy: nextId("actor"),
+    overlapReviewedBy: await makeHumanReviewer(),
     overlapReviewedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   });
@@ -1236,7 +1262,7 @@ test("DerivedMeasurement: supersession succeeds when the SAME aggregate inputs a
     outputQuantityType: "AREA",
     semanticCategory: "DEFECT_AREA_METRIC",
     calculationScope: declaredScopeLabel,
-    overlapReviewedBy: nextId("actor"),
+    overlapReviewedBy: await makeHumanReviewer(),
     overlapReviewedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   });
@@ -1255,7 +1281,7 @@ test("DerivedMeasurement: supersession succeeds when the SAME aggregate inputs a
     outputQuantityType: "AREA",
     semanticCategory: "DEFECT_AREA_METRIC",
     calculationScope: declaredScopeLabel,
-    overlapReviewedBy: nextId("actor"),
+    overlapReviewedBy: await makeHumanReviewer(),
     overlapReviewedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   });
@@ -1724,7 +1750,7 @@ test("GROSS_MINUS_OPENINGS: host + 1 opening + overlap ack succeeds", async () =
       inputDerivedMeasurementIds: [openingResultId],
       targetId: host.targetId,
       calculationScope: host.targetId,
-      overlapReviewedBy: nextId("actor"),
+      overlapReviewedBy: await makeHumanReviewer(),
       overlapReviewedAt: new Date().toISOString(),
     }),
   );
@@ -2054,7 +2080,7 @@ test("GROSS_MINUS_OPENINGS: historical (superseded) host and opening sources rem
       inputDerivedMeasurementIds: [openingResultId],
       targetId: host.targetId,
       calculationScope: host.targetId,
-      overlapReviewedBy: nextId("actor"),
+      overlapReviewedBy: await makeHumanReviewer(),
       overlapReviewedAt: new Date().toISOString(),
     }),
   );
@@ -2099,7 +2125,7 @@ test("GROSS_MINUS_OPENINGS: self-supersession composes correctly with host/openi
       inputDerivedMeasurementIds: [openingResultId],
       targetId: host.targetId,
       calculationScope: host.targetId,
-      overlapReviewedBy: nextId("actor"),
+      overlapReviewedBy: await makeHumanReviewer(),
       overlapReviewedAt: new Date().toISOString(),
     }),
   );
@@ -2119,7 +2145,7 @@ test("GROSS_MINUS_OPENINGS: self-supersession composes correctly with host/openi
       supersedesDerivedMeasurementId: v1Id,
       targetId: host.targetId,
       calculationScope: host.targetId,
-      overlapReviewedBy: nextId("actor"),
+      overlapReviewedBy: await makeHumanReviewer(),
       overlapReviewedAt: new Date().toISOString(),
     }),
   );
@@ -2133,6 +2159,7 @@ test("GROSS_MINUS_OPENINGS: self-supersession composes correctly with host/openi
   // rejected — the successor chain remains linear, exactly as for every
   // other formulaType — even though its own host/opening inputs would
   // otherwise be perfectly valid.
+  const secondAttemptReviewerId = await makeHumanReviewer();
   await assert.rejects(
     () =>
       derivedMeasurementRepository.create(
@@ -2143,7 +2170,7 @@ test("GROSS_MINUS_OPENINGS: self-supersession composes correctly with host/openi
           supersedesDerivedMeasurementId: v1Id,
           targetId: host.targetId,
           calculationScope: host.targetId,
-          overlapReviewedBy: nextId("actor"),
+          overlapReviewedBy: secondAttemptReviewerId,
           overlapReviewedAt: new Date().toISOString(),
         }),
       ),
@@ -2360,4 +2387,71 @@ test("SF-01: aggregate formula behavior is unaffected — AGGREGATE_SUM still ca
   });
   const found = await derivedMeasurementRepository.getById(derivedMeasurementId);
   assert.ok(found?.calculationScope.includes(declaredScopeLabel));
+});
+
+// ---------------------------------------------------------------------------
+// SF-03: overlap reviewer identity validation
+// ---------------------------------------------------------------------------
+
+function makeSf03Record(overlapReviewedBy: string, targetId: string, formulaType: string, formulaVersion: number) {
+  return {
+    derivedMeasurementId: nextId("derived"),
+    formulaType: formulaType as Parameters<typeof derivedMeasurementRepository.create>[0]["formulaType"],
+    formulaVersion,
+    inputMeasurementIds: [nextId("measurement")],
+    inputGeometryRefs: [],
+    inputDerivedMeasurementIds: [],
+    targetId,
+    outputQuantityType: "AREA" as const,
+    semanticCategory: "RAW_AREA" as const,
+    calculationScope: targetId,
+    overlapReviewedBy: overlapReviewedBy as Parameters<typeof derivedMeasurementRepository.create>[0]["overlapReviewedBy"],
+    overlapReviewedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+  };
+}
+
+test("SF-03: overlapReviewedBy resolving to an ACTIVE HUMAN_OPERATOR is accepted", async () => {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = await makeTarget();
+  const reviewerId = await makeHumanReviewer();
+
+  const record = makeSf03Record(reviewerId, targetId, formula.formulaType, formula.version);
+  await derivedMeasurementRepository.create(record);
+
+  const found = await derivedMeasurementRepository.getById(record.derivedMeasurementId);
+  assert.equal(found?.overlapReviewedBy, reviewerId);
+});
+
+test("SF-03: overlapReviewedBy naming an unknown actor is rejected with ActorNotFoundError", async () => {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = await makeTarget();
+  const unknownActorId = nextId("actor"); // never seeded into actorRef
+
+  await assert.rejects(
+    () => derivedMeasurementRepository.create(makeSf03Record(unknownActorId, targetId, formula.formulaType, formula.version)),
+    ActorNotFoundError,
+  );
+});
+
+test("SF-03: overlapReviewedBy naming an AGENT is rejected with ActorTypeViolationError", async () => {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = await makeTarget();
+  const agentId = await makeAgentReviewer();
+
+  await assert.rejects(
+    () => derivedMeasurementRepository.create(makeSf03Record(agentId, targetId, formula.formulaType, formula.version)),
+    ActorTypeViolationError,
+  );
+});
+
+test("SF-03: overlapReviewedBy naming an INACTIVE HUMAN_OPERATOR is rejected with ActorInactiveError", async () => {
+  const formula = await makeFormulaDefinition("RECTANGLE_AREA");
+  const targetId = await makeTarget();
+  const inactiveReviewerId = await makeInactiveHumanReviewer();
+
+  await assert.rejects(
+    () => derivedMeasurementRepository.create(makeSf03Record(inactiveReviewerId, targetId, formula.formulaType, formula.version)),
+    ActorInactiveError,
+  );
 });

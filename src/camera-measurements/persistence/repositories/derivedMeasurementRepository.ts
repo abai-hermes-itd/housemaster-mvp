@@ -7,6 +7,7 @@ import type { DerivedMeasurementId } from "../../domain/ids/ids.ts";
 import type { FormulaType } from "../../domain/types/FormulaDefinition.ts";
 import { db } from "../db.ts";
 import { createAppendOnlyRepository } from "../guards/appendOnlyRepository.ts";
+import { assertActorType } from "../guards/actorAccountability.ts";
 import { VersionedAppendOnlyRuleViolationError } from "../guards/errors.ts";
 
 const table = db.derivedMeasurement;
@@ -58,7 +59,7 @@ export const derivedMeasurementRepository = {
    * host/openings structural split".
    */
   async create(record: DerivedMeasurement): Promise<DerivedMeasurementId> {
-    return db.transaction("rw", table, db.formulaDefinition, db.spatialTarget, db.geometry, async () => {
+    return db.transaction("rw", table, db.formulaDefinition, db.spatialTarget, db.geometry, db.actorRef, async () => {
       // The exact formulaDefinition identity/version must be pinned to an
       // existing row — FORMULA_AND_DERIVATION_CONTRACT.md §DerivedMeasurement.
       const formulaDefinition = await db.formulaDefinition.get([record.formulaType, record.formulaVersion]);
@@ -338,6 +339,20 @@ export const derivedMeasurementRepository = {
             `${spatiallyRelevantInputCount} spatially-relevant inputs — overlapReviewedBy/overlapReviewedAt are ` +
             `mandatory (FORMULA_AND_DERIVATION_CONTRACT.md §"Dedup & Overlap Rules").`,
         );
+      }
+
+      // --- SF-03: overlap reviewer identity validation ---
+      // IDENTITY_AND_ACCOUNTABILITY.md's Action -> Actor Requirement table
+      // lists "Overlap review | REQUIRED | HUMAN_OPERATOR only" — whenever
+      // overlapReviewedBy is populated (whether mandated by the 2+-input
+      // rule above or supplied voluntarily), it must resolve to an
+      // existing, currently-ACTIVE HUMAN_OPERATOR — never AGENT, never an
+      // unresolved id, never an INACTIVE actor. Reuses the exact same
+      // assertActorType() guard already used identically by
+      // CalibrationSession/Measurement/Evidence/Decision — no new lookup
+      // path, no new lifecycle model.
+      if (record.overlapReviewedBy !== undefined) {
+        await assertActorType(db.actorRef, record.overlapReviewedBy, ["HUMAN_OPERATOR"]);
       }
 
       // For an aggregate formulaType, calculationScope must itself
