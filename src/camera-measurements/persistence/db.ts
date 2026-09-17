@@ -6,19 +6,19 @@
  * Dexie 4's known TS2589 "excessively deep" instantiation error that a
  * zero/near-empty-table Dexie subclass can trigger.
  *
- * 14 of the physical v4 stores get typed table properties here (the 12
- * from G1-04 + G1-05B, plus `surveyAssignment` — G1-05C-01 — and
- * `scopeItem` — G1-05C-02). `measurementSession`, `report`, and
+ * 15 of the physical v4 stores get typed table properties here (the 12
+ * from G1-04 + G1-05B, plus `surveyAssignment` — G1-05C-01 — `scopeItem`
+ * — G1-05C-02 — and `measurementSession` — G1-05C-03). `report` and
  * `reportSnapshot` are real, physically registered v4 object stores
  * (see schema.ts) but have no typed property here yet — their domain
- * types don't exist until their own gates (G1-05C-03..05) author them.
+ * types don't exist until their own gates (G1-05C-04..05) author them.
  * This split is deliberate, not an oversight: MIG-01B established that
  * the physical Dexie schema and this TypeScript convenience layer are
  * independent concerns, and Dexie never requires a store to have a
  * typed property for the store itself to exist.
  */
 import Dexie, { type EntityTable, type Table } from "dexie";
-import type { ActorId, AssignmentId, BuildingId, CalibrationSessionId, CitationId, DecisionId, DerivedMeasurementId, EvidenceId, FormulaDefinitionId, GeometryId, MeasurementId, ProposalId, ScopeItemId, TargetId } from "../domain/ids/ids.ts";
+import type { ActorId, AssignmentId, BuildingId, CalibrationSessionId, CitationId, DecisionId, DerivedMeasurementId, EvidenceId, FormulaDefinitionId, GeometryId, MeasurementId, ProposalId, ScopeItemId, SessionId, TargetId } from "../domain/ids/ids.ts";
 import type { ActorRef } from "../domain/types/ActorRef.ts";
 import type { Building } from "../domain/types/Building.ts";
 import type { CalibrationSession } from "../domain/types/CalibrationSession.ts";
@@ -29,6 +29,7 @@ import type { FormulaDefinition, FormulaType } from "../domain/types/FormulaDefi
 import type { Geometry } from "../domain/types/Geometry.ts";
 import type { KnowledgeCitation } from "../domain/types/KnowledgeCitation.ts";
 import type { Measurement } from "../domain/types/Measurement.ts";
+import type { MeasurementSession } from "../domain/types/MeasurementSession.ts";
 import type { Proposal } from "../domain/types/Proposal.ts";
 import type { ScopeItem } from "../domain/types/ScopeItem.ts";
 import type { SpatialTarget } from "../domain/types/SpatialTarget.ts";
@@ -53,11 +54,12 @@ export type CameraMeasurementsDatabase = Dexie & {
   geometry: Table<Geometry, [GeometryId, number]>;
   formulaDefinition: Table<FormulaDefinition, [FormulaType, number]>;
   derivedMeasurement: EntityTable<DerivedMeasurement, "derivedMeasurementId">;
-  // MUTABLE_OPERATIONAL_STATE (G1-05C-01, G1-05C-02) — 2 of the 5 v4
-  // G1-05C stores with a typed property so far; see the module doc
-  // comment above.
+  // MUTABLE_OPERATIONAL_STATE (G1-05C-01, G1-05C-02, G1-05C-03) — 3 of
+  // the 5 v4 G1-05C stores with a typed property so far; see the module
+  // doc comment above.
   surveyAssignment: EntityTable<SurveyAssignment, "assignmentId">;
   scopeItem: EntityTable<ScopeItem, "scopeItemId">;
+  measurementSession: EntityTable<MeasurementSession, "sessionId">;
 };
 
 /** Singleton database instance for the application to import. */
@@ -80,5 +82,6 @@ export type {
   MeasurementId,
   ProposalId,
   ScopeItemId,
+  SessionId,
   TargetId,
 };
