@@ -51,3 +51,6 @@ export type DerivedMeasurementId = string;
  * SessionId already did for MeasurementSession.
  */
 export type AssignmentId = string;
+
+/** ScopeItem's own identity (G1-05C-02, MUTABLE_OPERATIONAL_STATE). */
+export type ScopeItemId = string;

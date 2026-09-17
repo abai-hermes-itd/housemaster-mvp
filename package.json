@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --import ./src/camera-measurements/tests/setup.ts --test src/camera-measurements/tests/referenceIdentity.test.ts src/camera-measurements/tests/appendOnlyFacts.test.ts src/camera-measurements/tests/versionedAppendOnly.test.ts src/camera-measurements/tests/schemaMigration.test.ts src/camera-measurements/tests/surveyAssignment.test.ts"
+    "test": "node --experimental-strip-types --import ./src/camera-measurements/tests/setup.ts --test src/camera-measurements/tests/referenceIdentity.test.ts src/camera-measurements/tests/appendOnlyFacts.test.ts src/camera-measurements/tests/versionedAppendOnly.test.ts src/camera-measurements/tests/schemaMigration.test.ts src/camera-measurements/tests/surveyAssignment.test.ts src/camera-measurements/tests/scopeItem.test.ts"
   },
   "dependencies": {
     "dexie": "^4.0.10"
