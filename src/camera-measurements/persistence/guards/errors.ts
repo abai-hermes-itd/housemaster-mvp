@@ -104,6 +104,21 @@ export class ConcurrencyConflictError extends Error {
 }
 
 /**
+ * Thrown when a mutation attempts to leave a MUTABLE_OPERATIONAL_STATE
+ * row in a forbidden state — e.g. reassigning or closing a
+ * SurveyAssignment outside its frozen lifecycle rules (HD-01/HD-01A).
+ * One shared class for this persistence class, consistent with
+ * ReferenceIdentityRuleViolationError (REFERENCE_IDENTITY) and
+ * VersionedAppendOnlyRuleViolationError (VERSIONED_APPEND_ONLY) above.
+ */
+export class MutableOperationalStateRuleViolationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MutableOperationalStateRuleViolationError";
+  }
+}
+
+/**
  * Thrown when a VERSIONED_APPEND_ONLY entity's lineage/reference rules
  * are violated at write time: a missing predecessor, a branching
  * successor (more than one row claiming the same predecessor), a

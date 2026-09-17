@@ -42,3 +42,12 @@ export type GeometryId = string;
 export type FormulaDefinitionId = string;
 
 export type DerivedMeasurementId = string;
+
+/**
+ * SurveyAssignment's own identity (G1-05C-01, MUTABLE_OPERATIONAL_STATE).
+ * The Dexie store for this entity is not yet registered — see MIG-01
+ * (all 5 G1-05C stores must land together in one coordinated v4 schema
+ * bump) — so this id type exists ahead of that registration, exactly as
+ * SessionId already did for MeasurementSession.
+ */
+export type AssignmentId = string;
