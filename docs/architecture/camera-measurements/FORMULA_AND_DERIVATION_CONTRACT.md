@@ -85,6 +85,7 @@ VOLUME_METRIC     = { VOLUME }
 
 ```
 derivedMeasurementId · formulaType+version (pinned) · pinned input IDs
+grossSourceDerivedMeasurementId (GROSS_MINUS_OPENINGS only)
 supersedesDerivedMeasurementId · semanticResultKey
 overlapReviewedBy/At/overlapRiskNoted (where applicable)
 ```
@@ -108,6 +109,24 @@ Supersession (via `supersedesDerivedMeasurementId`) is permitted **only within a
 - `overlapReviewedBy`/`overlapReviewedAt`/`overlapRiskNoted` are written atomically with the result at creation — never edited afterward. `overlapRiskNoted`, when set, propagates transitively downstream exactly like the assumed-input flag.
 - **No independent trust/status field exists on `DerivedMeasurement`.** Its provenance and trust characteristics (assumed-input, overlap-risk) are always read from its pinned inputs at query time, never stored/updated on the row itself.
 
+### `GROSS_MINUS_OPENINGS` — host/openings structural split
+
+`GROSS_MINUS_OPENINGS`'s inputs are not a homogeneous set like `AGGREGATE_SUM`/`DEFECT_*_TOTAL` — they are one gross-area **host** plus a set of opening-area **openings**, two structurally distinct roles that must be resolvable without inference. This is carried by a dedicated field, not by shape or position within the shared list:
+
+- **`grossSourceDerivedMeasurementId`** — pins the exact single gross-area host source. **Required** when `formulaType === GROSS_MINUS_OPENINGS`; **forbidden** (absent) for every other `formulaType`. Set once at creation, immutable, resolved by exact id only — never re-resolved to "current," identical discipline to every other pinned reference on `DerivedMeasurement`.
+- **`inputDerivedMeasurementIds`**, for `GROSS_MINUS_OPENINGS` specifically, holds the **opening sources only** — the host is never also listed here. This is not a new kind of ambiguity: `VOLUME` already populates this same shared field with a single, differently-meaning entry (its one pinned area-result), so a shared input-list field's populated meaning being `formulaType`-dependent is an existing pattern, not a departure from one.
+
+Write-time validation (`DerivedMeasurement` creation):
+
+| Role | Identity | Target | Quantity/category |
+|---|---|---|---|
+| Host (`grossSourceDerivedMeasurementId`) | must exist; must not also appear in `inputDerivedMeasurementIds` | `grossSource.targetId === record.targetId`; that target's `targetType ∈ {FACADE, ROOF}` | `outputQuantityType === AREA`; `semanticCategory === RAW_AREA` |
+| Each opening (`inputDerivedMeasurementIds[i]`) | must exist; list non-empty; no duplicate source `targetId` (Dedup Rule, below) | resolved target's `targetType === OPENING`; that target's `parentTargetId === record.targetId` (same-host compatibility, via existing `SpatialTarget` containment — no new field needed for this part) | `outputQuantityType === AREA` |
+
+- **Same-building compatibility is not an independently-checked rule here** — it follows from the `parentTargetId` check above, provided the `SpatialTarget` write path continues to reject a cross-building `parentTargetId` the way it currently does. Note precisely what is and isn't frozen-doc text: `PERSISTENCE_AND_IMMUTABILITY.md`/`DOMAIN_MODEL.md` state a same-`buildingId` requirement explicitly only for `replacesTargetIds` (lineage) — the equivalent guarantee for `parentTargetId` (containment) exists today only as an implementation behavior, not as an explicit architecture-doc sentence. This subsection relies on that behavior continuing to hold; it does not itself establish or freeze a new `parentTargetId` cross-building rule, and no independent `buildingId` comparison is added here.
+- **Historical/superseded sources are permitted for both roles.** `GROSS_MINUS_OPENINGS` does **not** require the host or any opening to be the current, unsuperseded leaf of its own chain at creation time — exact pinned ids are valid if explicitly selected, exactly as already true (silently) for `AGGREGATE_SUM`/`DEFECT_*_TOTAL`'s sources. "Current" stays a derived, read-time-only concept; it is never a write-time gate and never auto-substituted.
+- **Overlap-acknowledgement input count** (see "Dedup & Overlap Rules" below) is `1 (host) + inputDerivedMeasurementIds.length (openings)` for this `formulaType` — not the openings list alone.
+
 ## Assumed-Input Policy
 
 | formulaType | Policy |
@@ -118,9 +137,9 @@ Supersession (via `supersedesDerivedMeasurementId`) is permitted **only within a
 | POLYLINE_LENGTH | Forbidden, same reasoning as POLYGON_AREA |
 | GROSS_MINUS_OPENINGS / AGGREGATE_SUM / DEFECT_*_TOTAL | Conditionally allowed, **inherited only** — these formulas never originate a new assumption; they only ever transitively inherit `derivedFromAssumedInput` from their pinned inputs |
 
-**Assumed-input provenance propagates transitively**, recursively, to arbitrary depth: any `DerivedMeasurement` whose input set includes any Measurement or DerivedMeasurement flagged as assumption-derived must itself carry the flag, all the way through to `ReportSnapshot` rendering. No silent defaults anywhere in the chain.
+**Assumed-input provenance propagates transitively**, recursively, to arbitrary depth: any `DerivedMeasurement` whose input set includes any Measurement or DerivedMeasurement flagged as assumption-derived must itself carry the flag, all the way through to `ReportSnapshot` rendering. No silent defaults anywhere in the chain. For `GROSS_MINUS_OPENINGS` specifically, "input set" for this purpose means the full pinned set — `grossSourceDerivedMeasurementId` **and** every entry in `inputDerivedMeasurementIds` — not the openings list alone; the host is exactly as capable of carrying an inherited assumed-input or overlap-risk flag as any opening is.
 
 ## Dedup & Overlap Rules (for list-input formulas)
 
 - **Dedup by underlying source `targetId`**, never by `DerivedMeasurement` row ID — an aggregate's input set may include at most one `DerivedMeasurement` per source `targetId` (resolved to the current one, per `semanticResultKey`, before the dedup check).
-- **Overlap acknowledgement is mandatory**, not merely operator-initiated, whenever `GROSS_MINUS_OPENINGS`, `AGGREGATE_SUM`, or `DEFECT_AREA_TOTAL` combine 2 or more spatially-relevant inputs — the calculation cannot complete without a recorded acknowledgement (who reviewed, when, which inputs). The acknowledgement does **not** assert absence of overlap — only that a human reviewed the input set; no geometric overlap-detection algorithm is introduced. `DEFECT_LENGTH_TOTAL` does not require this (linear-defect double-counting is a duplicate-identity problem, already covered by the dedup rule above, not a true overlap problem).
+- **Overlap acknowledgement is mandatory**, not merely operator-initiated, whenever `GROSS_MINUS_OPENINGS`, `AGGREGATE_SUM`, or `DEFECT_AREA_TOTAL` combine 2 or more spatially-relevant inputs — the calculation cannot complete without a recorded acknowledgement (who reviewed, when, which inputs). For `GROSS_MINUS_OPENINGS`, the spatially-relevant input count is `1 (grossSourceDerivedMeasurementId, the host) + inputDerivedMeasurementIds.length (the openings)` — a host plus a single opening is already 2 and already requires acknowledgement; the count is never computed from the openings list alone. The acknowledgement does **not** assert absence of overlap — only that a human reviewed the input set; no geometric overlap-detection algorithm is introduced. `DEFECT_LENGTH_TOTAL` does not require this (linear-defect double-counting is a duplicate-identity problem, already covered by the dedup rule above, not a true overlap problem).

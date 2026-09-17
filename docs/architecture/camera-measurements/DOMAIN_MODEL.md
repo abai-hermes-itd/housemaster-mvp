@@ -94,7 +94,7 @@ Full catalogue and rules: `FORMULA_AND_DERIVATION_CONTRACT.md`.
 
 **Purpose**: a computed value produced by exactly one `FormulaDefinition` version applied to a pinned input set.
 **Primary identifier**: `derivedMeasurementId`.
-**Relationships**: pins exact `(formulaType, version)`, pins exact input IDs (Measurement / Geometry `(geometryId, version)` / other DerivedMeasurement IDs), `0..1 supersedesDerivedMeasurementId` (self-referential, set once at creation, linear + acyclic).
+**Relationships**: pins exact `(formulaType, version)`, pins exact input IDs (Measurement / Geometry `(geometryId, version)` / other DerivedMeasurement IDs), `0..1 supersedesDerivedMeasurementId` (self-referential, set once at creation, linear + acyclic). `0..1 grossSourceDerivedMeasurementId` — required only when `formulaType === GROSS_MINUS_OPENINGS` (forbidden otherwise) — pins that result's single gross-area host source as a structurally distinct slot from its `inputDerivedMeasurementIds` (which, for that one `formulaType`, holds the opening sources only); see `FORMULA_AND_DERIVATION_CONTRACT.md`'s `GROSS_MINUS_OPENINGS` — host/openings structural split for the full write-time validation rules.
 **`semanticResultKey`** — the domain within which "current" resolution and supersession apply — is **4-part**: `(targetId, outputQuantityType, semanticCategory, calculationScope)`. A 2-part shorthand is insufficient and causes gross/net and multi-aggregate-scope collisions — see `FORMULA_AND_DERIVATION_CONTRACT.md`.
 **No stored actor** — `DerivedMeasurement` creation is a deterministic computation (`NOT_APPLICABLE` actor, per `IDENTITY_AND_ACCOUNTABILITY.md`), and it carries no independent trust/status field of its own.
 
